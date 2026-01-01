@@ -236,12 +236,12 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
     # Get new rankings
     new_rankings = get_rankings(conn)
 
-    # Get file info for both players
-    cursor.execute('SELECT id, path FROM files WHERE id IN (?, ?)', (file_a_id, file_b_id))
+    # Get file info for both players with new Elo ratings
+    cursor.execute('SELECT id, path, elo FROM files WHERE id IN (?, ?)', (file_a_id, file_b_id))
     files = cursor.fetchall()
 
     print("\nRankings:")
-    for file_id, path in files:
+    for file_id, path, new_elo in files:
         old_rank = old_rankings.get(file_id, "N/A")
         new_rank = new_rankings.get(file_id, "N/A")
 
@@ -256,7 +256,7 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
         else:
             movement = f"#{new_rank} (down from #{old_rank})"
 
-        print(f"  {path}: {movement}")
+        print(f"  {path}: {movement} | New Elo: {int(new_elo)}")
     print()
 
 
