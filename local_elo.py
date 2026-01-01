@@ -318,7 +318,12 @@ def main():
             id_a, path_a, elo_a, _, _, _ = first_player
             id_b, path_b, elo_b, _, _, _ = second_player
 
-            print(f"A: {path_a} ({int(elo_a)}) vs B: {path_b} ({int(elo_b)})")
+            # Get current rankings
+            current_rankings = get_rankings(conn)
+            rank_a = current_rankings.get(id_a, "?")
+            rank_b = current_rankings.get(id_b, "?")
+
+            print(f"A: {path_a} ({int(elo_a)} / #{rank_a}) vs B: {path_b} ({int(elo_b)} / #{rank_b})")
 
             # Get user input
             while True:
@@ -329,7 +334,7 @@ def main():
                 if top_n is not None:
                     display_leaderboard(conn, top_n)
                     # Re-display the matchup
-                    print(f"A: {path_a} ({int(elo_a)}) vs B: {path_b} ({int(elo_b)})")
+                    print(f"A: {path_a} ({int(elo_a)} / #{rank_a}) vs B: {path_b} ({int(elo_b)} / #{rank_b})")
                     continue
 
                 # Validate input
