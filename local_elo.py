@@ -288,15 +288,26 @@ def main():
                        help='Target directory to search for files (default: current directory)')
     parser.add_argument('-m', '--match', dest='pattern', default='.*',
                        help='Regex pattern for matching files (default: match all files)')
+    parser.add_argument('-k', '--knockout', action='store_true',
+                       help='Knockout mode: eliminate losers until only one remains')
     args = parser.parse_args()
 
     # Initialize database
     conn = init_db(args.target_dir)
 
     try:
-        print("Local Elo - File Ranking Tool")
-        print("Commands: A (file A wins), B (file B wins), = (tie), top [N] (show leaderboard)")
-        print("Press Ctrl+C to exit\n")
+        # Track eliminated players in knockout mode
+        eliminated = set()
+
+        if args.knockout:
+            print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
+            print("Commands: A (file A wins), B (file B wins), = (tie), top [N] (show leaderboard)")
+            print("Note: Losers are eliminated! Last one standing wins.")
+            print("Press Ctrl+C to exit\n")
+        else:
+            print("Local Elo - File Ranking Tool")
+            print("Commands: A (file A wins), B (file B wins), = (tie), top [N] (show leaderboard)")
+            print("Press Ctrl+C to exit\n")
 
         while True:
             # Sync files with database
@@ -305,13 +316,27 @@ def main():
             # Get active files
             files = get_active_files(conn, args.target_dir)
 
+            # In knockout mode, filter out eliminated players
+            if args.knockout:
+                files = [f for f in files if f[0] not in eliminated]
+
             if len(files) == 0:
                 print("No files found matching the pattern.")
                 break
 
             if len(files) == 1:
-                print("Only one file found. Need at least two files for comparison.")
-                break
+                if args.knockout:
+                    # Winner found in knockout mode
+                    winner = files[0]
+                    print(f"\n{'='*60}")
+                    print(f"WINNER: {winner[1]}")
+                    print(f"Final Elo: {int(winner[2])}")
+                    print(f"Record: {winner[3]}W-{winner[4]}L-{winner[5]}T")
+                    print(f"{'='*60}\n")
+                    break
+                else:
+                    print("Only one file found. Need at least two files for comparison.")
+                    break
 
             # Select two players
             first_player = select_first_player(files)
@@ -358,6 +383,22 @@ def main():
 
                     # Display ranking changes
                     display_ranking_changes(conn, old_rankings, id_a, id_b)
+
+                    # In knockout mode, eliminate the loser
+                    if args.knockout:
+                        if result == 'A':
+                            eliminated.add(id_b)
+                            print(f"  {path_b} has been ELIMINATED!\n")
+                        elif result == 'B':
+                            eliminated.add(id_a)
+                            print(f"  {path_a} has been ELIMINATED!\n")
+                        # In case of tie, no one is eliminated
+                        else:
+                            print("  Tie - no one eliminated.\n")
+
+                        # Show remaining players count
+                        remaining_count = len([f for f in get_active_files(conn, args.target_dir) if f[0] not in eliminated])
+                        print(f"Players remaining: {remaining_count}\n")
 
                     break
                 else:
