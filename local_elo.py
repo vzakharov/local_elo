@@ -54,7 +54,7 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
 def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
     """
     Discover files in the target directory matching the regex pattern.
-    Excludes the script itself and the database file.
+    Excludes the script itself, the database file, and hidden/system files.
     """
     files = []
     regex = re.compile(pattern)
@@ -62,6 +62,10 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
     for filename in os.listdir(target_dir):
         # Skip directories
         if os.path.isdir(os.path.join(target_dir, filename)):
+            continue
+
+        # Skip hidden/system files (starting with .)
+        if filename.startswith('.'):
             continue
 
         # Skip the script itself and database
