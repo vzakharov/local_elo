@@ -16,9 +16,10 @@ DEFAULT_LEADERBOARD_SIZE = 10
 DB_NAME = "local_elo.db"
 
 
-def init_db() -> sqlite3.Connection:
+def init_db(target_dir: str = '.') -> sqlite3.Connection:
     """Initialize the SQLite database and create tables if they don't exist."""
-    conn = sqlite3.connect(DB_NAME)
+    db_path = os.path.join(target_dir, DB_NAME)
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     # Create files table
@@ -50,17 +51,17 @@ def init_db() -> sqlite3.Connection:
     return conn
 
 
-def discover_files(pattern: str) -> List[str]:
+def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
     """
-    Discover files in the current directory matching the regex pattern.
+    Discover files in the target directory matching the regex pattern.
     Excludes the script itself and the database file.
     """
     files = []
     regex = re.compile(pattern)
 
-    for filename in os.listdir('.'):
+    for filename in os.listdir(target_dir):
         # Skip directories
-        if os.path.isdir(filename):
+        if os.path.isdir(os.path.join(target_dir, filename)):
             continue
 
         # Skip the script itself and database
@@ -88,9 +89,9 @@ def add_file_to_db(conn: sqlite3.Connection, filepath: str) -> None:
         pass
 
 
-def sync_files(conn: sqlite3.Connection, pattern: str) -> None:
+def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') -> None:
     """Sync discovered files with the database."""
-    files = discover_files(pattern)
+    files = discover_files(pattern, target_dir)
     for filepath in files:
         add_file_to_db(conn, filepath)
 
@@ -153,14 +154,14 @@ def record_game(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
     conn.commit()
 
 
-def get_active_files(conn: sqlite3.Connection) -> List[Tuple[int, str, float, int, int, int]]:
+def get_active_files(conn: sqlite3.Connection, target_dir: str = '.') -> List[Tuple[int, str, float, int, int, int]]:
     """Get all files that still exist in the filesystem."""
     cursor = conn.cursor()
     cursor.execute('SELECT id, path, elo, wins, losses, ties FROM files')
     all_files = cursor.fetchall()
 
     # Filter to only files that still exist
-    active_files = [f for f in all_files if os.path.exists(f[1])]
+    active_files = [f for f in all_files if os.path.exists(os.path.join(target_dir, f[1]))]
     return active_files
 
 
@@ -279,12 +280,14 @@ def main():
     """Main entry point for the Local Elo CLI tool."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Local Elo - Rank files using Elo ratings')
-    parser.add_argument('pattern', nargs='?', default='.*',
+    parser.add_argument('target_dir', nargs='?', default='.',
+                       help='Target directory to search for files (default: current directory)')
+    parser.add_argument('-m', '--match', dest='pattern', default='.*',
                        help='Regex pattern for matching files (default: match all files)')
     args = parser.parse_args()
 
     # Initialize database
-    conn = init_db()
+    conn = init_db(args.target_dir)
 
     try:
         print("Local Elo - File Ranking Tool")
@@ -293,10 +296,10 @@ def main():
 
         while True:
             # Sync files with database
-            sync_files(conn, args.pattern)
+            sync_files(conn, args.pattern, args.target_dir)
 
             # Get active files
-            files = get_active_files(conn)
+            files = get_active_files(conn, args.target_dir)
 
             if len(files) == 0:
                 print("No files found matching the pattern.")
