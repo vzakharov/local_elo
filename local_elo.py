@@ -172,9 +172,25 @@ def get_active_files(conn: sqlite3.Connection, target_dir: str = '.') -> List[Tu
 def select_first_player(files: List[Tuple[int, str, float, int, int, int]]) -> Tuple[int, str, float, int, int, int]:
     """
     Select the first player using weighted random selection.
-    Weight = probability of beating an average opponent (DEFAULT_ELO).
+    Combines two weights:
+    1. Elo-based weight: probability of beating an average opponent (DEFAULT_ELO)
+    2. Games-played weight: 1 / (games_played + 1) to balance selection frequency
+
+    Combined weight = elo_weight * games_weight
     """
-    weights = [calculate_win_probability(f[2], DEFAULT_ELO) for f in files]
+    weights = []
+    for f in files:
+        # Calculate Elo-based weight
+        elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+
+        # Calculate games-played weight to balance play frequency
+        games_played = f[3] + f[4] + f[5]  # wins + losses + ties
+        games_weight = 1.0 / (games_played + 1)
+
+        # Combine weights multiplicatively
+        combined_weight = elo_weight * games_weight
+        weights.append(combined_weight)
+
     return random.choices(files, weights=weights, k=1)[0]
 
 
