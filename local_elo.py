@@ -169,12 +169,19 @@ def get_active_files(conn: sqlite3.Connection, target_dir: str = '.') -> List[Tu
     return active_files
 
 
-def select_first_player(files: List[Tuple[int, str, float, int, int, int]]) -> Tuple[int, str, float, int, int, int]:
+def select_first_player(files: List[Tuple[int, str, float, int, int, int]],
+                        power: float = 1.0) -> Tuple[int, str, float, int, int, int]:
     """
     Select the first player using weighted random selection.
     Combines two weights:
     1. Elo-based weight: probability of beating an average opponent (DEFAULT_ELO)
-    2. Games-played weight: 1 / (games_played + 1) to balance selection frequency
+    2. Games-played weight: 1 / (games_played + 1)^power to balance selection frequency
+
+    The power parameter controls aggressiveness of games-played balancing:
+    - power=0.5: Gentler balancing (square root decay)
+    - power=1.0: Standard linear balancing (default)
+    - power=2.0: Aggressive quadratic decay
+    - power>2.0: Very aggressive (strongly favor least-played entries)
 
     Combined weight = elo_weight * games_weight
     """
@@ -185,7 +192,7 @@ def select_first_player(files: List[Tuple[int, str, float, int, int, int]]) -> T
 
         # Calculate games-played weight to balance play frequency
         games_played = f[3] + f[4] + f[5]  # wins + losses + ties
-        games_weight = 1.0 / (games_played + 1)
+        games_weight = 1.0 / ((games_played + 1) ** power)
 
         # Combine weights multiplicatively
         combined_weight = elo_weight * games_weight
@@ -306,7 +313,14 @@ def main():
                        help='Regex pattern for matching files (default: match all files)')
     parser.add_argument('-k', '--knockout', action='store_true',
                        help='Knockout mode: eliminate losers until only one remains')
+    parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
+                       help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
     args = parser.parse_args()
+
+    # Validate power parameter
+    if args.power <= 0:
+        print("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)")
+        sys.exit(1)
 
     # Initialize database
     conn = init_db(args.target_dir)
@@ -355,7 +369,7 @@ def main():
                     break
 
             # Select two players
-            first_player = select_first_player(files)
+            first_player = select_first_player(files, args.power)
             second_player = select_second_player(files, first_player)
 
             if second_player is None:
