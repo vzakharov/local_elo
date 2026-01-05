@@ -6,6 +6,7 @@ import re
 import random
 import sys
 import os
+import subprocess
 import argparse
 from typing import List, Tuple, Optional
 
@@ -241,7 +242,7 @@ def get_rankings(conn: sqlite3.Connection) -> dict:
     return rankings
 
 
-def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOARD_SIZE) -> None:
+def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOARD_SIZE, target_dir: str = '.') -> None:
     """Display the top N files by Elo rating."""
     cursor = conn.cursor()
     cursor.execute(
@@ -252,12 +253,14 @@ def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOA
 
     print(f"\nTop {limit} Files:")
     for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
-        print(f"{i}. {int(elo)} ({wins}W-{losses}L-{ties}T) {path}")
+        # Display full path if not in current directory
+        display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+        print(f"{i}. {int(elo)} ({wins}W-{losses}L-{ties}T) {display_path}")
     print()
 
 
 def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
-                           file_a_id: int, file_b_id: int) -> None:
+                           file_a_id: int, file_b_id: int, target_dir: str = '.') -> None:
     """Display ranking changes for the two files that just competed."""
     cursor = conn.cursor()
 
@@ -284,7 +287,9 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
         else:
             movement = f"#{new_rank} (down from #{old_rank})"
 
-        print(f"  {path}: {movement} | New Elo: {int(new_elo)}")
+        # Display full path if not in current directory
+        display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+        print(f"  {display_path}: {movement} | New Elo: {int(new_elo)}")
     print()
 
 
@@ -331,12 +336,12 @@ def main():
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
-            print("Commands: A (file A wins), B (file B wins), = (tie), top [N] (show leaderboard)")
+            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
             print("Note: Losers are eliminated! Last one standing wins.")
             print("Press Ctrl+C to exit\n")
         else:
             print("Local Elo - File Ranking Tool")
-            print("Commands: A (file A wins), B (file B wins), = (tie), top [N] (show leaderboard)")
+            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
             print("Press Ctrl+C to exit\n")
 
         while True:
@@ -385,24 +390,97 @@ def main():
             rank_a = current_rankings.get(id_a, "?")
             rank_b = current_rankings.get(id_b, "?")
 
-            print(f"A: {path_a} ({int(elo_a)} / #{rank_a}) vs B: {path_b} ({int(elo_b)} / #{rank_b})")
+            # Display full path if not in current directory
+            display_path_a = os.path.join(args.target_dir, path_a) if args.target_dir != '.' else path_a
+            display_path_b = os.path.join(args.target_dir, path_b) if args.target_dir != '.' else path_b
+            print(f"A: {display_path_a} ({int(elo_a)} / #{rank_a}) vs B: {display_path_b} ({int(elo_b)} / #{rank_b})")
 
             # Get user input
             while True:
-                user_input = input("Your choice (A/B/=/top [N]): ").strip()
+                user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>): ").strip()
 
                 # Check for top command
                 top_n = parse_top_command(user_input)
                 if top_n is not None:
-                    display_leaderboard(conn, top_n)
+                    display_leaderboard(conn, top_n, args.target_dir)
                     # Re-display the matchup
-                    print(f"A: {path_a} ({int(elo_a)} / #{rank_a}) vs B: {path_b} ({int(elo_b)} / #{rank_b})")
+                    print(f"A: {display_path_a} ({int(elo_a)} / #{rank_a}) vs B: {display_path_b} ({int(elo_b)} / #{rank_b})")
+                    continue
+
+                # Check for open command
+                if user_input.lower() == 'o':
+                    # Determine platform-specific open command
+                    if sys.platform == 'darwin':  # macOS
+                        open_cmd = 'open'
+                    elif sys.platform.startswith('linux'):  # Linux
+                        open_cmd = 'xdg-open'
+                    elif sys.platform == 'win32':  # Windows
+                        open_cmd = 'start'
+                    else:
+                        print("Unsupported platform for opening files")
+                        continue
+
+                    # Open both files
+                    full_path_a = os.path.join(args.target_dir, path_a)
+                    full_path_b = os.path.join(args.target_dir, path_b)
+                    subprocess.run([open_cmd, full_path_a])
+                    subprocess.run([open_cmd, full_path_b])
+                    print(f"Opened {path_a} and {path_b}")
+                    continue
+
+                # Check for rename command
+                if user_input.lower().startswith('ren '):
+                    # Parse rename command: "ren <old> <new>"
+                    parts = user_input.split(maxsplit=2)
+                    if len(parts) != 3:
+                        print("Usage: ren <old_filename> <new_filename>")
+                        continue
+
+                    old_name = parts[1]
+                    new_name = parts[2]
+
+                    # Build full paths
+                    old_path = os.path.join(args.target_dir, old_name)
+                    new_path = os.path.join(args.target_dir, new_name)
+
+                    # Validate old file exists
+                    if not os.path.exists(old_path):
+                        print(f"Error: File '{old_name}' not found")
+                        continue
+
+                    # Check if new file already exists
+                    if os.path.exists(new_path):
+                        print(f"Error: File '{new_name}' already exists")
+                        continue
+
+                    # Rename in filesystem
+                    try:
+                        os.rename(old_path, new_path)
+                    except OSError as e:
+                        print(f"Error renaming file: {e}")
+                        continue
+
+                    # Update database
+                    cursor = conn.cursor()
+                    cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_name, old_name))
+                    conn.commit()
+
+                    print(f"Renamed '{old_name}' to '{new_name}'")
+
+                    # Update current matchup if one of the files was renamed
+                    if path_a == old_name:
+                        path_a = new_name
+                    if path_b == old_name:
+                        path_b = new_name
+
+                    # Re-sync to refresh the files list
+                    files = sync_files(conn, args.pattern, args.target_dir)
                     continue
 
                 # Validate input
-                if user_input.upper() in ['A', 'B', '=']:
+                if user_input.upper() in ['A', 'B', 'T']:
                     result = user_input.upper()
-                    if result == '=':
+                    if result == 'T':
                         result = 'tie'
 
                     # Get rankings before the game
@@ -412,7 +490,7 @@ def main():
                     record_game(conn, id_a, id_b, elo_a, elo_b, result)
 
                     # Display ranking changes
-                    display_ranking_changes(conn, old_rankings, id_a, id_b)
+                    display_ranking_changes(conn, old_rankings, id_a, id_b, args.target_dir)
 
                     # In knockout mode, eliminate the loser
                     if args.knockout:
