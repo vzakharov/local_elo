@@ -205,13 +205,22 @@ def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.') -> dict:
     cursor.execute('SELECT COUNT(*) FROM knockout_state')
     eliminated_count = cursor.fetchone()[0]
 
-    # Count total active files (files that exist in database and on disk)
-    active_count = len(get_active_files(conn, target_dir))
+    # Get all active files (files that exist in database and on disk)
+    all_active_files = get_active_files(conn, target_dir)
+
+    # Load eliminated IDs to filter them out
+    eliminated_ids = load_knockout_state(conn)
+
+    # Count files still competing (active files minus eliminated)
+    competing_count = len([f for f in all_active_files if f[0] not in eliminated_ids])
+
+    # Total is all files that exist on disk
+    total_count = len(all_active_files)
 
     return {
         'eliminated_count': eliminated_count,
-        'active_count': active_count,
-        'total_count': eliminated_count + active_count
+        'competing_count': competing_count,
+        'total_count': total_count
     }
 
 
@@ -410,7 +419,7 @@ def main():
                 print(f"Resuming knockout tournament...")
                 print(f"  Total files in database: {stats['total_count']}")
                 print(f"  Already eliminated: {stats['eliminated_count']}")
-                print(f"  Still competing: {stats['active_count']}")
+                print(f"  Still competing: {stats['competing_count']}")
                 print()
         else:
             # Not in knockout mode, but keep variable for consistency
