@@ -48,6 +48,15 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create knockout_state table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knockout_state (
+            file_id INTEGER PRIMARY KEY,
+            eliminated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (file_id) REFERENCES files(id)
+        )
+    ''')
+
     conn.commit()
     return conn
 
@@ -157,6 +166,53 @@ def record_game(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
     )
 
     conn.commit()
+
+
+def load_knockout_state(conn: sqlite3.Connection) -> set:
+    """Load eliminated file IDs from database."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_id FROM knockout_state')
+    eliminated_ids = {row[0] for row in cursor.fetchall()}
+    return eliminated_ids
+
+
+def save_elimination(conn: sqlite3.Connection, file_id: int) -> None:
+    """Mark a file as eliminated in the database."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'INSERT INTO knockout_state (file_id) VALUES (?)',
+            (file_id,)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # File already eliminated (shouldn't happen, but handle gracefully)
+        pass
+
+
+def clear_knockout_state(conn: sqlite3.Connection) -> None:
+    """Clear all knockout state from database."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_state')
+    conn.commit()
+
+
+def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.') -> dict:
+    """Get statistics about knockout state."""
+    cursor = conn.cursor()
+
+    # Count eliminated players
+    cursor.execute('SELECT COUNT(*) FROM knockout_state')
+    eliminated_count = cursor.fetchone()[0]
+
+    # Count total active files (files that exist in database and on disk)
+    active_count = len(get_active_files(conn, target_dir))
+
+    return {
+        'eliminated_count': eliminated_count,
+        'active_count': active_count,
+        'total_count': eliminated_count + active_count
+    }
 
 
 def get_active_files(conn: sqlite3.Connection, target_dir: str = '.') -> List[Tuple[int, str, float, int, int, int]]:
@@ -320,6 +376,8 @@ def main():
                        help='Knockout mode: eliminate losers until only one remains')
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
+    parser.add_argument('--reset-knockout', action='store_true',
+                       help='Clear knockout state and start fresh')
     args = parser.parse_args()
 
     # Validate power parameter
@@ -331,8 +389,32 @@ def main():
     conn = init_db(args.target_dir)
 
     try:
-        # Track eliminated players in knockout mode
-        eliminated = set()
+        # Handle knockout state reset
+        if args.reset_knockout:
+            clear_knockout_state(conn)
+            print("Knockout state has been reset.\n")
+            if not args.knockout:
+                # User just wanted to reset, not start a new knockout
+                print("Use -k/--knockout to start a new knockout tournament.")
+                conn.close()
+                sys.exit(0)
+
+        # Initialize eliminated set
+        if args.knockout:
+            # Load existing knockout state from database
+            eliminated = load_knockout_state(conn)
+
+            if eliminated:
+                # Resume existing knockout tournament
+                stats = get_knockout_stats(conn, args.target_dir)
+                print(f"Resuming knockout tournament...")
+                print(f"  Total files in database: {stats['total_count']}")
+                print(f"  Already eliminated: {stats['eliminated_count']}")
+                print(f"  Still competing: {stats['active_count']}")
+                print()
+        else:
+            # Not in knockout mode, but keep variable for consistency
+            eliminated = set()
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
@@ -492,13 +574,15 @@ def main():
                     # Display ranking changes
                     display_ranking_changes(conn, old_rankings, id_a, id_b, args.target_dir)
 
-                    # In knockout mode, eliminate the loser
+                    # In knockout mode, eliminate the loser and persist to database
                     if args.knockout:
                         if result == 'A':
                             eliminated.add(id_b)
+                            save_elimination(conn, id_b)
                             print(f"  {path_b} has been ELIMINATED!\n")
                         elif result == 'B':
                             eliminated.add(id_a)
+                            save_elimination(conn, id_a)
                             print(f"  {path_a} has been ELIMINATED!\n")
                         # In case of tie, no one is eliminated
                         else:
