@@ -115,6 +115,24 @@ def calculate_win_probability(elo_a: float, elo_b: float) -> float:
     return 1.0 / (1.0 + 10.0 ** ((elo_b - elo_a) / 400.0))
 
 
+def format_record_values(wins: int, losses: int, ties: int) -> str:
+    """Format W/T/L record from individual values."""
+    return f"{wins}W-{losses}L-{ties}T"
+
+
+def format_record(player: tuple) -> str:
+    """
+    Format a W/T/L record string from a player tuple.
+
+    Args:
+        player: Tuple in format (id, path, elo, wins, losses, ties)
+
+    Returns:
+        Formatted string like "12W-8L-2T"
+    """
+    return format_record_values(player[3], player[4], player[5])
+
+
 def update_elo_ratings(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
                        elo_a: float, elo_b: float, result: str) -> Tuple[float, float]:
     """
@@ -320,7 +338,7 @@ def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOA
     for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
         # Display full path if not in current directory
         display_path = os.path.join(target_dir, path) if target_dir != '.' else path
-        print(f"{i}. {int(elo)} ({wins}W-{losses}L-{ties}T) {display_path}")
+        print(f"{i}. {int(elo)} ({format_record_values(wins, losses, ties)}) {display_path}")
     print()
 
 
@@ -457,7 +475,7 @@ def main():
                     print(f"\n{'='*60}")
                     print(f"WINNER: {winner[1]}")
                     print(f"Final Elo: {int(winner[2])}")
-                    print(f"Record: {winner[3]}W-{winner[4]}L-{winner[5]}T")
+                    print(f"Record: {format_record(winner)}")
                     print(f"{'='*60}\n")
                     break
                 else:
@@ -496,7 +514,7 @@ def main():
             display_path_b = os.path.join(args.target_dir, path_b) if args.target_dir != '.' else path_b
 
             # Build matchup display string
-            matchup_display = f"A: {display_path_a} ({int(elo_a)} / #{rank_a})\nvs\nB: {display_path_b} ({int(elo_b)} / #{rank_b})\nWin probability: {win_prob_display}"
+            matchup_display = f"A: {display_path_a} ({int(elo_a)} / #{rank_a} / {format_record(first_player)})\nvs\nB: {display_path_b} ({int(elo_b)} / #{rank_b} / {format_record(second_player)})\nWin probability: {win_prob_display}"
             print(matchup_display)
 
             # Get user input
