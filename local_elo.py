@@ -67,6 +67,7 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
     Excludes the script itself, the database file, and hidden/system files.
     """
     files = []
+    print(f"Discovering files in {target_dir} with pattern {pattern}")
     regex = re.compile(pattern)
 
     for filename in os.listdir(target_dir):
@@ -78,8 +79,8 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
         if filename.startswith('.'):
             continue
 
-        # Skip the script itself and database
-        if filename in ['local_elo.py', DB_NAME]:
+        # Skip the script itself, database, and startup scripts
+        if filename in ['local_elo.py', DB_NAME, 'elo_start.sh', 'elo_start.bat']:
             continue
 
         # Check if filename matches the pattern
@@ -215,7 +216,7 @@ def clear_knockout_state(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.') -> dict:
+def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.', pattern: str = '.*') -> dict:
     """Get statistics about knockout state."""
     cursor = conn.cursor()
 
@@ -224,7 +225,7 @@ def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.') -> dict:
     eliminated_count = cursor.fetchone()[0]
 
     # Get all active files (files that exist in database and on disk)
-    all_active_files = get_active_files(conn, target_dir)
+    all_active_files = get_active_files(conn, target_dir, pattern)
 
     # Load eliminated IDs to filter them out
     eliminated_ids = load_knockout_state(conn)
@@ -242,14 +243,16 @@ def get_knockout_stats(conn: sqlite3.Connection, target_dir: str = '.') -> dict:
     }
 
 
-def get_active_files(conn: sqlite3.Connection, target_dir: str = '.') -> List[Tuple[int, str, float, int, int, int]]:
-    """Get all files that still exist in the filesystem."""
+def get_active_files(conn: sqlite3.Connection, target_dir: str = '.', pattern: str = '.*') -> List[Tuple[int, str, float, int, int, int]]:
+    """Get all files that still exist in the filesystem and match the pattern."""
     cursor = conn.cursor()
     cursor.execute('SELECT id, path, elo, wins, losses, ties FROM files')
     all_files = cursor.fetchall()
 
-    # Filter to only files that still exist
-    active_files = [f for f in all_files if os.path.exists(os.path.join(target_dir, f[1]))]
+    regex = re.compile(pattern)
+
+    # Filter to only files that still exist and match the pattern
+    active_files = [f for f in all_files if os.path.exists(os.path.join(target_dir, f[1])) and regex.search(f[1])]
     return active_files
 
 
@@ -433,7 +436,7 @@ def main():
 
             if eliminated:
                 # Resume existing knockout tournament
-                stats = get_knockout_stats(conn, args.target_dir)
+                stats = get_knockout_stats(conn, args.target_dir, args.pattern)
                 print(f"Resuming knockout tournament...")
                 print(f"  Total files in database: {stats['total_count']}")
                 print(f"  Already eliminated: {stats['eliminated_count']}")
@@ -458,7 +461,7 @@ def main():
             sync_files(conn, args.pattern, args.target_dir)
 
             # Get active files
-            files = get_active_files(conn, args.target_dir)
+            files = get_active_files(conn, args.target_dir, args.pattern)
 
             # In knockout mode, filter out eliminated players
             if args.knockout:
@@ -531,23 +534,52 @@ def main():
 
                 # Check for open command
                 if user_input.lower() == 'o':
-                    # Determine platform-specific open command
-                    if sys.platform == 'darwin':  # macOS
-                        open_cmd = 'open'
-                    elif sys.platform.startswith('linux'):  # Linux
-                        open_cmd = 'xdg-open'
-                    elif sys.platform == 'win32':  # Windows
-                        open_cmd = 'start'
-                    else:
-                        print("Unsupported platform for opening files")
-                        continue
-
-                    # Open both files
+                    # Construct full paths first
                     full_path_a = os.path.join(args.target_dir, path_a)
                     full_path_b = os.path.join(args.target_dir, path_b)
-                    subprocess.run([open_cmd, full_path_a])
-                    subprocess.run([open_cmd, full_path_b])
-                    print(f"Opened {path_a} and {path_b}")
+
+                    # Convert to absolute paths
+                    abs_path_a = os.path.abspath(full_path_a)
+                    abs_path_b = os.path.abspath(full_path_b)
+
+                    # Check for custom startup script in target directory
+                    custom_script = None
+                    if sys.platform in ['darwin', 'linux'] or sys.platform.startswith('linux'):
+                        # macOS and Linux use .sh
+                        script_path = os.path.join(args.target_dir, 'elo_start.sh')
+                        if os.path.exists(script_path):
+                            custom_script = script_path
+                    elif sys.platform == 'win32':
+                        # Windows uses .bat
+                        script_path = os.path.join(args.target_dir, 'elo_start.bat')
+                        if os.path.exists(script_path):
+                            custom_script = script_path
+
+                    if custom_script:
+                        # Use custom script with absolute paths as arguments
+                        # On Unix systems, explicitly invoke with bash; on Windows, run directly
+                        if sys.platform in ['darwin', 'linux'] or sys.platform.startswith('linux'):
+                            subprocess.run(['bash', custom_script, abs_path_a])
+                            subprocess.run(['bash', custom_script, abs_path_b])
+                        else:
+                            subprocess.run([custom_script, abs_path_a])
+                            subprocess.run([custom_script, abs_path_b])
+                        print(f"Opened {path_a} and {path_b} using {os.path.basename(custom_script)}")
+                    else:
+                        # Fall back to default platform commands
+                        if sys.platform == 'darwin':  # macOS
+                            open_cmd = 'open'
+                        elif sys.platform.startswith('linux'):  # Linux
+                            open_cmd = 'xdg-open'
+                        elif sys.platform == 'win32':  # Windows
+                            open_cmd = 'start'
+                        else:
+                            print("Unsupported platform for opening files")
+                            continue
+
+                        subprocess.run([open_cmd, abs_path_a])
+                        subprocess.run([open_cmd, abs_path_b])
+                        print(f"Opened {path_a} and {path_b}")
                     continue
 
                 # Check for rename command
@@ -629,7 +661,7 @@ def main():
                             print("  Tie - no one eliminated.\n")
 
                         # Show remaining players count
-                        remaining_count = len([f for f in get_active_files(conn, args.target_dir) if f[0] not in eliminated])
+                        remaining_count = len([f for f in get_active_files(conn, args.target_dir, args.pattern) if f[0] not in eliminated])
                         print(f"Players remaining: {remaining_count}\n")
 
                     break
