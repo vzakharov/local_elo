@@ -481,10 +481,23 @@ def main():
             rank_a = current_rankings.get(id_a, "?")
             rank_b = current_rankings.get(id_b, "?")
 
+            # Calculate win probabilities
+            prob_a = calculate_win_probability(elo_a, elo_b)
+            prob_b = 1.0 - prob_a
+
+            # Display probabilities as percentages, always >= 50%
+            if prob_a >= 0.5:
+                win_prob_display = f"{prob_a * 100:.0f}% A"
+            else:
+                win_prob_display = f"{prob_b * 100:.0f}% B"
+
             # Display full path if not in current directory
             display_path_a = os.path.join(args.target_dir, path_a) if args.target_dir != '.' else path_a
             display_path_b = os.path.join(args.target_dir, path_b) if args.target_dir != '.' else path_b
-            print(f"A: {display_path_a} ({int(elo_a)} / #{rank_a}) vs B: {display_path_b} ({int(elo_b)} / #{rank_b})")
+
+            # Build matchup display string
+            matchup_display = f"A: {display_path_a} ({int(elo_a)} / #{rank_a}) vs B: {display_path_b} ({int(elo_b)} / #{rank_b}) | Win probability: {win_prob_display}"
+            print(matchup_display)
 
             # Get user input
             while True:
@@ -495,7 +508,7 @@ def main():
                 if top_n is not None:
                     display_leaderboard(conn, top_n, args.target_dir)
                     # Re-display the matchup
-                    print(f"A: {display_path_a} ({int(elo_a)} / #{rank_a}) vs B: {display_path_b} ({int(elo_b)} / #{rank_b})")
+                    print(matchup_display)
                     continue
 
                 # Check for open command
