@@ -121,6 +121,30 @@ def format_record_values(wins: int, losses: int, ties: int) -> str:
     return f"{wins}W-{losses}L-{ties}T"
 
 
+def create_elo_histogram(elo: float, max_elo: float, bar_width: int = 80) -> str:
+    """
+    Create a histogram bar using filled block characters.
+
+    Args:
+        elo: Current Elo rating
+        max_elo: Maximum Elo rating to use as reference for scaling
+        bar_width: Maximum number of blocks to display
+
+    Returns:
+        A string containing the histogram bar (filled blocks)
+    """
+    if max_elo <= 0:
+        return ' ' * bar_width
+
+    ratio = min(elo / max_elo, 1.0)
+    filled_blocks = int(ratio * bar_width)
+
+    # Use Unicode full block character (U+2588)
+    # Pad with spaces to maintain alignment
+    bar = '█' * filled_blocks
+    return bar.ljust(bar_width)
+
+
 def format_record(player: tuple) -> str:
     """
     Format a W/T/L record string from a player tuple.
@@ -329,7 +353,7 @@ def get_rankings(conn: sqlite3.Connection) -> dict:
 
 
 def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOARD_SIZE, target_dir: str = '.') -> None:
-    """Display the top N files by Elo rating."""
+    """Display the top N files by Elo rating with histogram visualization."""
     cursor = conn.cursor()
     cursor.execute(
         'SELECT path, elo, wins, losses, ties FROM files ORDER BY elo DESC LIMIT ?',
@@ -337,11 +361,26 @@ def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOA
     )
     results = cursor.fetchall()
 
+    if not results:
+        print(f"\nTop {limit} Files:\nNo files found.\n")
+        return
+
+    # Find max Elo for scaling the histogram
+    max_elo = results[0][1]
+
     print(f"\nTop {limit} Files:")
     for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
         # Display full path if not in current directory
         display_path = os.path.join(target_dir, path) if target_dir != '.' else path
-        print(f"{i}. {int(elo)} ({format_record_values(wins, losses, ties)}) {display_path}")
+
+        # Generate histogram (comes FIRST to ensure alignment)
+        histogram = create_elo_histogram(elo, max_elo)
+
+        # Format record string
+        record = format_record_values(wins, losses, ties)
+
+        # Print: histogram | rank | elo | record | path
+        print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
     print()
 
 
@@ -406,8 +445,6 @@ def main():
                        help='Knockout mode: eliminate losers until only one remains')
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
-    parser.add_argument('--reset-knockout', action='store_true',
-                       help='Clear knockout state and start fresh')
     args = parser.parse_args()
 
     # Validate power parameter
@@ -419,16 +456,6 @@ def main():
     conn = init_db(args.target_dir)
 
     try:
-        # Handle knockout state reset
-        if args.reset_knockout:
-            clear_knockout_state(conn)
-            print("Knockout state has been reset.\n")
-            if not args.knockout:
-                # User just wanted to reset, not start a new knockout
-                print("Use -k/--knockout to start a new knockout tournament.")
-                conn.close()
-                sys.exit(0)
-
         # Initialize eliminated set
         if args.knockout:
             # Load existing knockout state from database
@@ -523,7 +550,7 @@ def main():
             # Get user input
             while True:
                 if args.knockout:
-                    user_input = input("Your choice (A/B/t/a-/b-/ta-/tb-/t-/o/top [N]/ren <old> <new>): ").strip()
+                    user_input = input("Your choice (A/B/t/a-/b-/ta-/tb-/t-/o/top [N]/ren <old> <new>/reset): ").strip()
                 else:
                     user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>): ").strip()
 
@@ -634,6 +661,25 @@ def main():
                     files = sync_files(conn, args.pattern, args.target_dir)
                     continue
 
+                # Check for reset command (knockout mode only)
+                if user_input.lower() == 'reset':
+                    if not args.knockout:
+                        print("Error: reset command only available in knockout mode")
+                        continue
+
+                    # Ask for confirmation
+                    confirm = input("Are you sure you want to reset the knockout tournament? All eliminations will be cleared. (y/N): ").strip().lower()
+                    if confirm == 'y' or confirm == 'yes':
+                        clear_knockout_state(conn)
+                        eliminated.clear()  # Clear in-memory set
+                        print("Knockout tournament has been reset! All players are back in.\n")
+                        # Break out of input loop to re-sync and start fresh
+                        break
+                    else:
+                        print("Reset cancelled.\n")
+                        print(matchup_display)
+                    continue
+
                 # Check for knockout-only commands
                 if user_input.upper() in ['A-', 'B-', 'TA-', 'TB-', 'T-'] and not args.knockout:
                     print("Error: a-/b-/ta-/tb-/t- commands only available in knockout mode")
@@ -710,7 +756,7 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print("Invalid input. Please enter A, B, t, a-, b-, ta-, tb-, t-, o, top [N], or ren <old> <new>")
+                        print("Invalid input. Please enter A, B, t, a-, b-, ta-, tb-, t-, o, top [N], ren <old> <new>, or reset")
                     else:
                         print("Invalid input. Please enter A, B, t, o, top [N], or ren <old> <new>")
 
