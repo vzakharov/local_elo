@@ -448,7 +448,7 @@ def main():
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
-            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
+            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
             print("Note: Losers are eliminated! Last one standing wins.")
             print("Press Ctrl+C to exit\n")
         else:
@@ -631,8 +631,13 @@ def main():
                     files = sync_files(conn, args.pattern, args.target_dir)
                     continue
 
+                # Check for a-/b- commands (knockout mode only)
+                if user_input.upper() in ['A-', 'B-'] and not args.knockout:
+                    print("Error: a-/b- commands only available in knockout mode")
+                    continue
+
                 # Validate input
-                if user_input.upper() in ['A', 'B', 'T']:
+                if user_input.upper() in ['A', 'B', 'T', 'A-', 'B-']:
                     result = user_input.upper()
                     if result == 'T':
                         result = 'tie'
@@ -640,22 +645,35 @@ def main():
                     # Get rankings before the game
                     old_rankings = get_rankings(conn)
 
-                    # Record the game
-                    record_game(conn, id_a, id_b, elo_a, elo_b, result)
+                    # Record the game (normalize A-/B- to A/B for Elo calculation)
+                    game_result = result.rstrip('-') if result in ['A-', 'B-'] else result
+                    record_game(conn, id_a, id_b, elo_a, elo_b, game_result)
 
                     # Display ranking changes
                     display_ranking_changes(conn, old_rankings, id_a, id_b, args.target_dir)
 
-                    # In knockout mode, eliminate the loser and persist to database
+                    # In knockout mode, eliminate the loser (or winner if a-/b- used) and persist to database
                     if args.knockout:
-                        if result == 'A':
-                            eliminated.add(id_b)
-                            save_elimination(conn, id_b)
-                            print(f"  {path_b} has been ELIMINATED!\n")
-                        elif result == 'B':
-                            eliminated.add(id_a)
-                            save_elimination(conn, id_a)
-                            print(f"  {path_a} has been ELIMINATED!\n")
+                        remove_winner = result in ['A-', 'B-']
+
+                        if result in ['A', 'A-']:
+                            if remove_winner:
+                                eliminated.add(id_a)
+                                save_elimination(conn, id_a)
+                                print(f"  {path_a} wins but is REMOVED from tournament!\n")
+                            else:
+                                eliminated.add(id_b)
+                                save_elimination(conn, id_b)
+                                print(f"  {path_b} has been ELIMINATED!\n")
+                        elif result in ['B', 'B-']:
+                            if remove_winner:
+                                eliminated.add(id_b)
+                                save_elimination(conn, id_b)
+                                print(f"  {path_b} wins but is REMOVED from tournament!\n")
+                            else:
+                                eliminated.add(id_a)
+                                save_elimination(conn, id_a)
+                                print(f"  {path_a} has been ELIMINATED!\n")
                         # In case of tie, no one is eliminated
                         else:
                             print("  Tie - no one eliminated.\n")
