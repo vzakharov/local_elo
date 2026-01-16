@@ -475,7 +475,7 @@ def main():
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
-            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
+            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
             print("Note: Losers are eliminated! Last one standing wins.")
             print("Press Ctrl+C to exit\n")
         else:
@@ -550,7 +550,7 @@ def main():
             # Get user input
             while True:
                 if args.knockout:
-                    user_input = input("Your choice (A/B/t/a-/b-/ta-/tb-/t-/o/top [N]/ren <old> <new>/reset): ").strip()
+                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/reset): ").strip()
                 else:
                     user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>): ").strip()
 
@@ -681,12 +681,12 @@ def main():
                     continue
 
                 # Check for knockout-only commands
-                if user_input.upper() in ['A-', 'B-', 'TA-', 'TB-', 'T-'] and not args.knockout:
-                    print("Error: a-/b-/ta-/tb-/t- commands only available in knockout mode")
+                if user_input.upper() in ['A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-'] and not args.knockout:
+                    print("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode")
                     continue
 
                 # Validate input
-                if user_input.upper() in ['A', 'B', 'T', 'A-', 'B-', 'TA-', 'TB-', 'T-']:
+                if user_input.upper() in ['A', 'B', 'T', 'A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-']:
                     result = user_input.upper()
                     if result == 'T':
                         result = 'tie'
@@ -694,9 +694,9 @@ def main():
                     # Get rankings before the game
                     old_rankings = get_rankings(conn)
 
-                    # Record the game (normalize commands with - to base result for Elo calculation)
-                    if result in ['A-', 'B-']:
-                        game_result = result.rstrip('-')
+                    # Record the game (normalize commands with -/+ to base result for Elo calculation)
+                    if result in ['A-', 'B-', 'A+', 'B+']:
+                        game_result = result.rstrip('-+')
                     elif result in ['TA-', 'TB-', 'T-']:
                         game_result = 'tie'
                     else:
@@ -709,21 +709,28 @@ def main():
                     # In knockout mode, eliminate the loser (or winner if a-/b- used) and persist to database
                     if args.knockout:
                         remove_winner = result in ['A-', 'B-']
+                        keep_loser = result in ['A+', 'B+']
 
-                        if result in ['A', 'A-']:
+                        if result in ['A', 'A-', 'A+']:
                             if remove_winner:
                                 eliminated.add(id_a)
                                 save_elimination(conn, id_a)
                                 print(f"  {path_a} wins but is REMOVED from tournament!\n")
+                            elif keep_loser:
+                                # Winner wins, but loser stays
+                                print(f"  {path_a} wins, but both players stay in tournament!\n")
                             else:
                                 eliminated.add(id_b)
                                 save_elimination(conn, id_b)
                                 print(f"  {path_b} has been ELIMINATED!\n")
-                        elif result in ['B', 'B-']:
+                        elif result in ['B', 'B-', 'B+']:
                             if remove_winner:
                                 eliminated.add(id_b)
                                 save_elimination(conn, id_b)
                                 print(f"  {path_b} wins but is REMOVED from tournament!\n")
+                            elif keep_loser:
+                                # Winner wins, but loser stays
+                                print(f"  {path_b} wins, but both players stay in tournament!\n")
                             else:
                                 eliminated.add(id_a)
                                 save_elimination(conn, id_a)
@@ -756,7 +763,7 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print("Invalid input. Please enter A, B, t, a-, b-, ta-, tb-, t-, o, top [N], ren <old> <new>, or reset")
+                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, or reset")
                     else:
                         print("Invalid input. Please enter A, B, t, o, top [N], or ren <old> <new>")
 
