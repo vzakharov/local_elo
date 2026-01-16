@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 import argparse
+import fnmatch
 from typing import List, Tuple, Optional
 
 # Global Constants
@@ -433,6 +434,45 @@ def parse_top_command(user_input: str) -> Optional[int]:
         return DEFAULT_LEADERBOARD_SIZE
 
 
+def apply_wildcard_rename(old_pattern: str, new_pattern: str, target_dir: str) -> List[Tuple[str, str]]:
+    """
+    Apply wildcard rename pattern to matching files.
+    
+    Args:
+        old_pattern: Pattern with * wildcard (e.g., "hello_*")
+        new_pattern: Replacement pattern with * wildcard (e.g., "hey_*")
+        target_dir: Directory to search for files
+        
+    Returns:
+        List of (old_filename, new_filename) tuples for matched files
+        
+    Raises:
+        ValueError: If pattern has multiple * characters or no matches found
+    """
+    if old_pattern.count('*') != 1:
+        raise ValueError("Pattern must contain exactly one * wildcard")
+    
+    if new_pattern.count('*') != 1:
+        raise ValueError("Replacement pattern must contain exactly one * wildcard")
+    
+    matches = []
+    old_prefix, old_suffix = old_pattern.split('*', 1)
+    
+    for filename in os.listdir(target_dir):
+        if os.path.isdir(os.path.join(target_dir, filename)):
+            continue
+        
+        if fnmatch.fnmatch(filename, old_pattern):
+            matched_part = filename[len(old_prefix):len(filename) - len(old_suffix)]
+            new_filename = new_pattern.replace('*', matched_part)
+            matches.append((filename, new_filename))
+    
+    if not matches:
+        raise ValueError(f"No files found matching pattern '{old_pattern}'")
+    
+    return matches
+
+
 def main():
     """Main entry point for the Local Elo CLI tool."""
     # Parse command line arguments
@@ -623,43 +663,91 @@ def main():
                     old_name = parts[1]
                     new_name = parts[2]
 
-                    # Build full paths
-                    old_path = os.path.join(args.target_dir, old_name)
-                    new_path = os.path.join(args.target_dir, new_name)
-
-                    # Validate old file exists
-                    if not os.path.exists(old_path):
-                        print(f"Error: File '{old_name}' not found")
+                    # Check if wildcard pattern is used
+                    if '*' in old_name:
+                        try:
+                            matches = apply_wildcard_rename(old_name, new_name, args.target_dir)
+                            
+                            # Validate no conflicts (new filenames don't already exist)
+                            conflict_found = False
+                            for old_filename, new_filename in matches:
+                                new_path = os.path.join(args.target_dir, new_filename)
+                                if os.path.exists(new_path):
+                                    print(f"Error: File '{new_filename}' already exists")
+                                    conflict_found = True
+                                    break
+                            
+                            if conflict_found:
+                                continue
+                            
+                            # Rename all matching files
+                            cursor = conn.cursor()
+                            renamed_count = 0
+                            for old_filename, new_filename in matches:
+                                old_path = os.path.join(args.target_dir, old_filename)
+                                new_path = os.path.join(args.target_dir, new_filename)
+                                
+                                try:
+                                    os.rename(old_path, new_path)
+                                    cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_filename, old_filename))
+                                    renamed_count += 1
+                                    
+                                    # Update current matchup if one of the files was renamed
+                                    if path_a == old_filename:
+                                        path_a = new_filename
+                                    if path_b == old_filename:
+                                        path_b = new_filename
+                                except OSError as e:
+                                    print(f"Error renaming '{old_filename}' to '{new_filename}': {e}")
+                            
+                            conn.commit()
+                            print(f"Renamed {renamed_count} file(s)")
+                            
+                        except ValueError as e:
+                            print(f"Error: {e}")
+                        
+                        # Re-sync to refresh the files list
+                        files = sync_files(conn, args.pattern, args.target_dir)
                         continue
+                    else:
+                        # Single file rename (existing logic)
+                        # Build full paths
+                        old_path = os.path.join(args.target_dir, old_name)
+                        new_path = os.path.join(args.target_dir, new_name)
 
-                    # Check if new file already exists
-                    if os.path.exists(new_path):
-                        print(f"Error: File '{new_name}' already exists")
+                        # Validate old file exists
+                        if not os.path.exists(old_path):
+                            print(f"Error: File '{old_name}' not found")
+                            continue
+
+                        # Check if new file already exists
+                        if os.path.exists(new_path):
+                            print(f"Error: File '{new_name}' already exists")
+                            continue
+
+                        # Rename in filesystem
+                        try:
+                            os.rename(old_path, new_path)
+                        except OSError as e:
+                            print(f"Error renaming file: {e}")
+                            continue
+
+                        # Update database
+                        cursor = conn.cursor()
+                        cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_name, old_name))
+                        conn.commit()
+
+                        print(f"Renamed '{old_name}' to '{new_name}'")
+
+                        # Update current matchup if one of the files was renamed
+                        if path_a == old_name:
+                            path_a = new_name
+                        if path_b == old_name:
+                            path_b = new_name
+
+                        # Re-sync to refresh the files list
+                        files = sync_files(conn, args.pattern, args.target_dir)
                         continue
-
-                    # Rename in filesystem
-                    try:
-                        os.rename(old_path, new_path)
-                    except OSError as e:
-                        print(f"Error renaming file: {e}")
-                        continue
-
-                    # Update database
-                    cursor = conn.cursor()
-                    cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_name, old_name))
-                    conn.commit()
-
-                    print(f"Renamed '{old_name}' to '{new_name}'")
-
-                    # Update current matchup if one of the files was renamed
-                    if path_a == old_name:
-                        path_a = new_name
-                    if path_b == old_name:
-                        path_b = new_name
-
-                    # Re-sync to refresh the files list
-                    files = sync_files(conn, args.pattern, args.target_dir)
-                    continue
 
                 # Check for reset command (knockout mode only)
                 if user_input.lower() == 'reset':
