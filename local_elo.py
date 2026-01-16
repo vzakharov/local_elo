@@ -112,6 +112,30 @@ def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') ->
         add_file_to_db(conn, filepath)
 
 
+def trash_file(filepath: str, target_dir: str) -> None:
+    """Move file to .trash subdirectory with timestamp."""
+    import datetime
+
+    if not os.path.exists(filepath):
+        print(f"Warning: File {filepath} does not exist on disk")
+        return
+
+    trash_dir = os.path.join(target_dir, '.trash')
+    os.makedirs(trash_dir, exist_ok=True)
+
+    basename = os.path.basename(filepath)
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    name, ext = os.path.splitext(basename)
+    trash_name = f"{name}_{timestamp}{ext}"
+    trash_path = os.path.join(trash_dir, trash_name)
+
+    try:
+        os.rename(filepath, trash_path)
+        print(f"Moved to trash: {trash_path}")
+    except OSError as e:
+        print(f"Warning: Could not trash file: {e}")
+
+
 def calculate_win_probability(elo_a: float, elo_b: float) -> float:
     """Calculate the probability of player A beating player B using Elo formula."""
     return 1.0 / (1.0 + 10.0 ** ((elo_b - elo_a) / 400.0))
@@ -184,6 +208,37 @@ def update_elo_ratings(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
     return new_elo_a, new_elo_b
 
 
+def redistribute_elo_delta(conn: sqlite3.Connection, delta: float, skip_file_id: int) -> None:
+    """
+    Redistribute delta uniformly across remaining entries.
+    This preserves all pairwise win probabilities since rating gaps stay unchanged.
+
+    Args:
+        conn: Database connection
+        delta: Amount to redistribute (removed_elo - 1000)
+        skip_file_id: ID of removed entry (exclude from redistribution)
+    """
+    if abs(delta) < 0.01:
+        return
+
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM files WHERE id != ?', (skip_file_id,))
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        print("Warning: No remaining entries to redistribute Elo to")
+        return
+
+    adjustment = delta / count
+
+    cursor.execute(
+        'UPDATE files SET elo = elo + ? WHERE id != ?',
+        (adjustment, skip_file_id)
+    )
+
+    conn.commit()
+
+
 def record_game(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
                 elo_a: float, elo_b: float, result: str) -> None:
     """Record a game and update Elo ratings."""
@@ -238,6 +293,21 @@ def clear_knockout_state(conn: sqlite3.Connection) -> None:
     """Clear all knockout state from database."""
     cursor = conn.cursor()
     cursor.execute('DELETE FROM knockout_state')
+    conn.commit()
+
+
+def remove_entry_from_database(conn: sqlite3.Connection, file_id: int) -> None:
+    """
+    Remove entry and all related records.
+    Order matters due to foreign key constraints.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute('DELETE FROM knockout_state WHERE file_id = ?', (file_id,))
+    cursor.execute('DELETE FROM games WHERE file_a_id = ? OR file_b_id = ?',
+                   (file_id, file_id))
+    cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
+
     conn.commit()
 
 
@@ -473,6 +543,65 @@ def apply_wildcard_rename(old_pattern: str, new_pattern: str, target_dir: str) -
     return matches
 
 
+def handle_rem_command(conn: sqlite3.Connection, pattern: str, current_id_a: int, current_id_b: int,
+                       target_dir: str, files: List[Tuple[int, str, float, int, int, int]],
+                       eliminated: set) -> bool:
+    """
+    Remove entry matching pattern from database and filesystem.
+
+    Args:
+        conn: Database connection
+        pattern: Filename pattern (supports wildcards via fnmatch)
+        current_id_a, current_id_b: IDs of current matchup
+        target_dir: Directory containing files
+        files: List of tuples (id, path, elo, wins, losses, ties)
+        eliminated: Set of eliminated IDs (knockout mode)
+
+    Returns:
+        True if current matchup should be re-selected, False otherwise
+    """
+    matching_files = [f for f in files if fnmatch.fnmatch(f[1], pattern)]
+
+    if not matching_files:
+        print(f"No entry found matching pattern: {pattern}")
+        return False
+
+    if len(matching_files) > 1:
+        print(f"Pattern matches multiple entries:")
+        for f in matching_files:
+            print(f"  - {f[1]} (Elo: {f[2]:.1f})")
+        print("Please be more specific.")
+        return False
+
+    target_file = matching_files[0]
+    file_id, file_path, file_elo = target_file[0], target_file[1], target_file[2]
+
+    display_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
+    full_file_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
+
+    print(f"\nAbout to remove: {display_path}")
+    print(f"Current Elo: {file_elo:.1f}")
+    delta = file_elo - 1000
+    print(f"Delta to redistribute: {delta:+.1f}")
+    confirm = input("Confirm removal? (y/n): ").strip().lower()
+
+    if confirm != 'y' and confirm != 'yes':
+        print("Removal cancelled.")
+        return False
+
+    skip_matchup = (file_id == current_id_a or file_id == current_id_b)
+    redistribute_elo_delta(conn, delta, file_id)
+    trash_file(full_file_path, target_dir)
+    remove_entry_from_database(conn, file_id)
+
+    if file_id in eliminated:
+        eliminated.discard(file_id)
+
+    print(f"✓ Removed {file_path} and redistributed {delta:+.1f} Elo")
+
+    return skip_matchup
+
+
 def main():
     """Main entry point for the Local Elo CLI tool."""
     # Parse command line arguments
@@ -515,12 +644,12 @@ def main():
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
-            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
+            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem <pattern> (remove entry)")
             print("Note: Losers are eliminated! Last one standing wins.")
             print("Press Ctrl+C to exit\n")
         else:
             print("Local Elo - File Ranking Tool")
-            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file)")
+            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem <pattern> (remove entry)")
             print("Press Ctrl+C to exit\n")
 
         while True:
@@ -768,6 +897,13 @@ def main():
                         print(matchup_display)
                     continue
 
+                # Check for rem command
+                if user_input.lower().startswith('rem '):
+                    pattern = user_input[4:].strip()
+                    if handle_rem_command(conn, pattern, id_a, id_b, args.target_dir, files, eliminated):
+                        break
+                    continue
+
                 # Check for knockout-only commands
                 if user_input.upper() in ['A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-'] and not args.knockout:
                     print("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode")
@@ -851,9 +987,9 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, or reset")
+                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem <pattern>, or reset")
                     else:
-                        print("Invalid input. Please enter A, B, t, o, top [N], or ren <old> <new>")
+                        print("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem <pattern>")
 
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
