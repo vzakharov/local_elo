@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 from typing import Tuple
 
 from . import DEFAULT_LEADERBOARD_SIZE
@@ -48,36 +49,104 @@ def format_record(player: tuple) -> str:
     return format_record_values(player[3], player[4], player[5])
 
 
-def display_leaderboard(conn: sqlite3.Connection, limit: int = DEFAULT_LEADERBOARD_SIZE, target_dir: str = '.') -> None:
-    """Display the top N files by Elo rating with histogram visualization."""
+def display_leaderboard(
+    conn: sqlite3.Connection,
+    limit: int = DEFAULT_LEADERBOARD_SIZE,
+    target_dir: str = '.',
+    sort_by: str = 'elo',
+    show_all_files: bool = False,
+    pattern: str = '.*'
+) -> None:
+    """
+    Display the top N files with histogram visualization.
+
+    Args:
+        conn: Database connection
+        limit: Maximum number of files to display
+        target_dir: Target directory for file paths
+        sort_by: Sorting mode - 'elo' (default) or 'knockout'
+        show_all_files: If True, show all DB files regardless of pattern/filesystem
+        pattern: Regex pattern to filter files (ignored if show_all_files=True)
+    """
     cursor = conn.cursor()
-    cursor.execute(
-        'SELECT path, elo, wins, losses, ties FROM files ORDER BY elo DESC LIMIT ?',
-        (limit,)
-    )
-    results = cursor.fetchall()
 
-    if not results:
-        print(f"\nTop {limit} Files:\nNo files found.\n")
-        return
+    if sort_by == 'knockout':
+        # Join with knockout_state for elimination-based sorting
+        cursor.execute('''
+            SELECT f.path, f.elo, f.wins, f.losses, f.ties, k.eliminated_at
+            FROM files f
+            LEFT JOIN knockout_state k ON f.id = k.file_id
+            ORDER BY
+                CASE WHEN k.eliminated_at IS NULL THEN 0 ELSE 1 END,
+                k.eliminated_at DESC,
+                f.elo DESC
+        ''')
+        all_results = cursor.fetchall()
 
-    # Find max Elo for scaling the histogram
-    max_elo = results[0][1]
+        # Filter results if needed
+        if not show_all_files:
+            # Filter to files that exist on disk and match pattern
+            regex = re.compile(pattern)
+            results = [
+                r for r in all_results
+                if os.path.exists(os.path.join(target_dir, r[0])) and regex.search(r[0])
+            ]
+        else:
+            results = all_results
 
-    print(f"\nTop {limit} Files:")
-    for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
-        # Display full path if not in current directory
-        display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+        # Limit results
+        results = results[:limit]
 
-        # Generate histogram (comes FIRST to ensure alignment)
-        histogram = create_elo_histogram(elo, max_elo)
+        if not results:
+            print(f"\nKnockout Tournament Results:\nNo files found.\n")
+            return
 
-        # Format record string
-        record = format_record_values(wins, losses, ties)
+        # Find max Elo for scaling (use first entry which is the winner)
+        max_elo = results[0][1] if results else 1000
 
-        # Print: histogram | rank | elo | record | path
-        print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
-    print()
+        print(f"\nKnockout Tournament Results:")
+        for i, (path, elo, wins, losses, ties, eliminated_at) in enumerate(results, 1):
+            # Display full path if not in current directory
+            display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+
+            # Generate histogram (comes FIRST to ensure alignment)
+            histogram = create_elo_histogram(elo, max_elo)
+
+            # Format record string
+            record = format_record_values(wins, losses, ties)
+
+            # Print: histogram | rank | elo | record | path
+            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
+        print()
+    else:
+        # Original elo-based sorting
+        cursor.execute(
+            'SELECT path, elo, wins, losses, ties FROM files ORDER BY elo DESC LIMIT ?',
+            (limit,)
+        )
+        results = cursor.fetchall()
+
+        if not results:
+            print(f"\nTop {limit} Files:\nNo files found.\n")
+            return
+
+        # Find max Elo for scaling the histogram
+        max_elo = results[0][1]
+
+        print(f"\nTop {limit} Files:")
+        for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
+            # Display full path if not in current directory
+            display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+
+            # Generate histogram (comes FIRST to ensure alignment)
+            histogram = create_elo_histogram(elo, max_elo)
+
+            # Format record string
+            record = format_record_values(wins, losses, ties)
+
+            # Print: histogram | rank | elo | record | path
+            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
+        print()
 
 
 def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,

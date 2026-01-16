@@ -1,6 +1,8 @@
 import sqlite3
 import os
 import re
+import csv
+from datetime import datetime
 from typing import List, Tuple
 
 from . import DEFAULT_ELO, DB_NAME
@@ -167,3 +169,54 @@ def get_rankings(conn: sqlite3.Connection) -> dict:
         rankings[file_id] = rank
 
     return rankings
+
+
+def export_knockout_results(conn: sqlite3.Connection, target_dir: str) -> str:
+    """
+    Export knockout tournament results to CSV.
+    Returns the path to the created CSV file.
+
+    This should only be called when the tournament has naturally completed
+    (exactly 1 uneliminated player remains).
+    """
+    cursor = conn.cursor()
+
+    # Query all files sorted by elimination order (winner first, then latest eliminations)
+    cursor.execute('''
+        SELECT f.path, f.elo, f.wins, f.losses, f.ties, k.eliminated_at
+        FROM files f
+        LEFT JOIN knockout_state k ON f.id = k.file_id
+        ORDER BY
+            CASE WHEN k.eliminated_at IS NULL THEN 0 ELSE 1 END,
+            k.eliminated_at DESC,
+            f.elo DESC
+    ''')
+    results = cursor.fetchall()
+
+    # Generate CSV filename with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    csv_filename = f'knockout_results_{timestamp}.csv'
+    csv_path = os.path.join(target_dir, csv_filename)
+
+    # Write CSV file
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+
+        # Write header
+        writer.writerow(['Position', 'Path', 'Elo', 'Record', 'Eliminated At'])
+
+        # Write data rows
+        for position, (path, elo, wins, losses, ties, eliminated_at) in enumerate(results, 1):
+            # Format record as W-L-T
+            record = f"{wins}W-{losses}L-{ties}T"
+
+            # Format elimination timestamp
+            if eliminated_at is None:
+                elim_display = "Winner"
+            else:
+                # Display the elimination timestamp
+                elim_display = eliminated_at
+
+            writer.writerow([position, path, int(elo), record, elim_display])
+
+    return csv_path

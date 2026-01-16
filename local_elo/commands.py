@@ -9,7 +9,7 @@ from . import DEFAULT_LEADERBOARD_SIZE
 from .db import (
     init_db, sync_files, get_active_files, load_knockout_state,
     save_elimination, clear_knockout_state, get_rankings, remove_entry_from_database,
-    get_knockout_stats
+    get_knockout_stats, export_knockout_results
 )
 from .elo import calculate_win_probability, record_game, redistribute_elo_delta
 from .files import trash_file, apply_wildcard_rename
@@ -407,14 +407,51 @@ def main():
 
             if len(files) == 1:
                 if args.knockout:
-                    # Winner found in knockout mode
-                    winner = files[0]
+                    # Winner found in knockout mode - show complete tournament results
                     print(f"\n{'='*60}")
-                    print(f"WINNER: {winner[1]}")
-                    print(f"Final Elo: {int(winner[2])}")
-                    print(f"Record: {format_record(winner)}")
+                    print("KNOCKOUT TOURNAMENT COMPLETE!")
                     print(f"{'='*60}\n")
-                    break
+
+                    # Count total files in database for limit
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT COUNT(*) FROM files')
+                    total_files_count = cursor.fetchone()[0]
+
+                    # Display elimination-order leaderboard for all tournament participants
+                    display_leaderboard(
+                        conn,
+                        limit=total_files_count,
+                        target_dir=args.target_dir,
+                        sort_by='knockout',
+                        show_all_files=True,
+                        pattern=args.pattern
+                    )
+
+                    # Prompt user for reset or quit
+                    print("Type 'reset' to start a new tournament and export results to CSV, or 'q' to quit.")
+
+                    should_exit = False
+                    while True:
+                        user_input = input("> ").strip().lower()
+                        if user_input == 'reset':
+                            # Export results to CSV
+                            csv_path = export_knockout_results(conn, args.target_dir)
+                            print(f"\nResults exported to: {csv_path}\n")
+
+                            # Clear knockout state and restart
+                            clear_knockout_state(conn)
+                            eliminated.clear()
+                            print("Knockout tournament reset! All players are back in.\n")
+                            break  # Exit input loop, continue to next matchup
+                        elif user_input in ['q', 'quit']:
+                            should_exit = True
+                            break  # Exit input loop AND signal main loop to exit
+                        else:
+                            print("Invalid input. Please type 'reset' or 'q'.\n")
+
+                    if should_exit:
+                        break  # Exit main comparison loop
+                    # Otherwise, continue to next matchup
                 else:
                     print("Only one file found. Need at least two files for comparison.")
                     break
