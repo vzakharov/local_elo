@@ -10,6 +10,7 @@ from typing import List, Tuple, Optional
 from .constants import DB_NAME
 from .db import add_file_to_db, remove_entry_from_database
 from .elo import redistribute_elo_delta
+from .colors import green, red, yellow, cyan, bold, dim
 
 
 def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
@@ -18,7 +19,7 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
     Excludes the script itself, the database file, and hidden/system files.
     """
     files = []
-    print(f"Discovering files in {target_dir} with pattern {pattern}")
+    print(dim(f"Discovering files in {target_dir} with pattern {pattern}"))
     regex = re.compile(pattern)
 
     for filename in os.listdir(target_dir):
@@ -51,7 +52,7 @@ def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') ->
 def trash_file(filepath: str, target_dir: str) -> None:
     """Move file to .trash subdirectory with timestamp."""
     if not os.path.exists(filepath):
-        print(f"Warning: File {filepath} does not exist on disk")
+        print(yellow(f"Warning: File {filepath} does not exist on disk"))
         return
 
     trash_dir = os.path.join(target_dir, '.trash')
@@ -65,9 +66,9 @@ def trash_file(filepath: str, target_dir: str) -> None:
 
     try:
         os.rename(filepath, trash_path)
-        print(f"Moved to trash: {trash_path}")
+        print(f"Moved to trash: {dim(trash_path)}")
     except OSError as e:
-        print(f"Warning: Could not trash file: {e}")
+        print(yellow(f"Warning: Could not trash file: {e}"))
 
 
 def apply_wildcard_rename(old_pattern: str, new_pattern: str, target_dir: str) -> List[Tuple[str, str]]:
@@ -118,7 +119,7 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
     """
     arg = arg.lower()
     if arg not in ('a', 'b', 'ab', 'ba'):
-        print(f"  Invalid argument: '{arg}'. Use 'a', 'b', or 'ab'.")
+        print(red(f"  Invalid argument: '{arg}'. Use 'a', 'b', or 'ab'."))
         return False
 
     to_remove = []
@@ -145,7 +146,7 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
         eliminated.discard(file_id)
         tournament_pool.discard(file_id)
 
-        print(f"✓ Removed {file_path} and redistributed {delta:+.1f} Elo")
+        print(f"{green('✓')} Removed {cyan(file_path)} and redistributed {bold(f'{delta:+.1f}')} Elo")
 
     return True
 
@@ -175,7 +176,7 @@ def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
         else:
             subprocess.run([custom_script, abs_path_a])
             subprocess.run([custom_script, abs_path_b])
-        print(f"Opened {path_a} and {path_b} using {os.path.basename(custom_script)}")
+        print(f"Opened {cyan(path_a)} and {cyan(path_b)} using {os.path.basename(custom_script)}")
     else:
         if sys.platform == 'darwin':
             open_cmd = 'open'
@@ -184,12 +185,12 @@ def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
         elif sys.platform == 'win32':
             open_cmd = 'start'
         else:
-            print("Unsupported platform for opening files")
+            print(yellow("Unsupported platform for opening files"))
             return
 
         subprocess.run([open_cmd, abs_path_a])
         subprocess.run([open_cmd, abs_path_b])
-        print(f"Opened {path_a} and {path_b}")
+        print(f"Opened {cyan(path_a)} and {cyan(path_b)}")
 
 
 def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir: str,
@@ -200,7 +201,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
     """
     parts = user_input.split(maxsplit=2)
     if len(parts) != 3:
-        print("Usage: ren <old_filename> <new_filename>")
+        print(yellow("Usage: ren <old_filename> <new_filename>"))
         return path_a, path_b
 
     old_name = parts[1]
@@ -214,7 +215,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
             for old_filename, new_filename in matches:
                 new_path = os.path.join(target_dir, new_filename)
                 if os.path.exists(new_path):
-                    print(f"Error: File '{new_filename}' already exists")
+                    print(red(f"Error: File '{new_filename}' already exists"))
                     conflict_found = True
                     break
             
@@ -237,13 +238,13 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
                     if path_b == old_filename:
                         path_b = new_filename
                 except OSError as e:
-                    print(f"Error renaming '{old_filename}' to '{new_filename}': {e}")
-            
+                    print(red(f"Error renaming '{old_filename}' to '{new_filename}': {e}"))
+
             conn.commit()
-            print(f"Renamed {renamed_count} file(s)")
-            
+            print(green(f"Renamed {renamed_count} file(s)"))
+
         except ValueError as e:
-            print(f"Error: {e}")
+            print(red(f"Error: {e}"))
         
         sync_files(conn, pattern, target_dir)
         return path_a, path_b
@@ -252,24 +253,24 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
         new_path = os.path.join(target_dir, new_name)
 
         if not os.path.exists(old_path):
-            print(f"Error: File '{old_name}' not found")
+            print(red(f"Error: File '{old_name}' not found"))
             return path_a, path_b
 
         if os.path.exists(new_path):
-            print(f"Error: File '{new_name}' already exists")
+            print(red(f"Error: File '{new_name}' already exists"))
             return path_a, path_b
 
         try:
             os.rename(old_path, new_path)
         except OSError as e:
-            print(f"Error renaming file: {e}")
+            print(red(f"Error renaming file: {e}"))
             return path_a, path_b
 
         cursor = conn.cursor()
         cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_name, old_name))
         conn.commit()
 
-        print(f"Renamed '{old_name}' to '{new_name}'")
+        print(green(f"Renamed '{old_name}' to '{new_name}'"))
 
         if path_a == old_name:
             path_a = new_name

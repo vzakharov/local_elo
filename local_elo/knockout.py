@@ -11,6 +11,7 @@ from .db import (
 )
 from .elo import calculate_win_probability, record_game
 from .ui import display_leaderboard, display_ranking_changes
+from .colors import bold, bold_red, bold_green, bold_cyan, green, red, yellow, cyan, dim
 
 
 def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: int,
@@ -41,40 +42,40 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
             if remove_winner:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                print(f"  {path_a} wins but is REMOVED from tournament!\n")
+                print(f"  {bold_green(path_a)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                print(f"  {path_a} wins, but both players stay in tournament!\n")
+                print(f"  {bold_green(path_a)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                print(f"  {path_b} has been ELIMINATED!\n")
+                print(f"  {bold_red(path_b)} has been {bold_red('ELIMINATED')}!\n")
         elif result in ['B', 'B-', 'B+']:
             if remove_winner:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                print(f"  {path_b} wins but is REMOVED from tournament!\n")
+                print(f"  {bold_green(path_b)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                print(f"  {path_b} wins, but both players stay in tournament!\n")
+                print(f"  {bold_green(path_b)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                print(f"  {path_a} has been ELIMINATED!\n")
+                print(f"  {bold_red(path_a)} has been {bold_red('ELIMINATED')}!\n")
         elif result == 'TA-':
             eliminated.add(id_a)
             save_elimination(conn, id_a)
-            print(f"  Tie, but {path_a} is REMOVED from tournament!\n")
+            print(f"  Tie, but {bold_red(path_a)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'TB-':
             eliminated.add(id_b)
             save_elimination(conn, id_b)
-            print(f"  Tie, but {path_b} is REMOVED from tournament!\n")
+            print(f"  Tie, but {bold_red(path_b)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'T-':
             eliminated.add(id_a)
             eliminated.add(id_b)
             save_elimination(conn, id_a)
             save_elimination(conn, id_b)
-            print(f"  Tie, but BOTH players are REMOVED from tournament!\n")
+            print(f"  Tie, but {bold_red('BOTH')} players are {bold_red('REMOVED')} from tournament!\n")
         else:
-            print("  Tie - no one eliminated.\n")
+            print(dim("  Tie - no one eliminated.\n"))
 
         if tournament_pool:
             remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
@@ -82,7 +83,7 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
         else:
             remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
                                   if f[0] not in eliminated])
-        print(f"Players remaining: {remaining_count}\n")
+        print(f"Players remaining: {bold(str(remaining_count))}\n")
 
 
 def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_pool: set) -> bool:
@@ -96,10 +97,10 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
         clear_knockout_pool(conn)
         eliminated.clear()
         tournament_pool.clear()
-        print("Knockout tournament has been reset! All players are back in.\n")
+        print(green("Knockout tournament has been reset! All players are back in.\n"))
         return True
     else:
-        print("Reset cancelled.\n")
+        print(dim("Reset cancelled.\n"))
         return False
 
 
@@ -116,26 +117,26 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
         if pool_size:
             pool_count = len(tournament_pool) if tournament_pool else None
             if pool_count and pool_count != pool_size:
-                print(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {pool_size}")
+                print(red(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {pool_size}"))
                 print("Options:")
-                print("  1. Continue without -n flag to resume existing tournament")
-                print("  2. Run 'reset' command to start a new tournament with new pool size")
+                print(f"  1. Continue without {bold('-n')} flag to resume existing tournament")
+                print(f"  2. Run '{bold('reset')}' command to start a new tournament with new pool size")
                 sys.exit(1)
 
         stats = get_knockout_stats(conn, target_dir, pattern)
         competing_count = len(tournament_pool) - len(eliminated) if tournament_pool else stats['competing_count']
-        print(f"Resuming knockout tournament...")
+        print(cyan("Resuming knockout tournament..."))
         if tournament_pool:
-            print(f"  Tournament pool size: {len(tournament_pool)}")
-        print(f"  Total files in database: {stats['total_count']}")
-        print(f"  Already eliminated: {stats['eliminated_count']}")
-        print(f"  Still competing: {competing_count}")
+            print(f"  Tournament pool size: {bold(str(len(tournament_pool)))}")
+        print(f"  Total files in database: {bold(str(stats['total_count']))}")
+        print(f"  Already eliminated: {red(str(stats['eliminated_count']))}")
+        print(f"  Still competing: {green(str(competing_count))}")
         print()
     else:
         if pool_size:
             all_files = get_active_files(conn, target_dir, pattern)
             if len(all_files) < pool_size:
-                print(f"ERROR: Only {len(all_files)} files available, but pool size is {pool_size}")
+                print(red(f"ERROR: Only {len(all_files)} files available, but pool size is {pool_size}"))
                 sys.exit(1)
 
             pool_weights = []
@@ -159,7 +160,7 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
 
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
-            print(f"Selected {pool_size} competitors for knockout tournament")
+            print(cyan(f"Selected {pool_size} competitors for knockout tournament"))
             print()
         else:
             tournament_pool = set()
@@ -173,9 +174,9 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
     Display winner screen and handle reset/quit.
     Returns True if should exit main loop, False to continue.
     """
-    print(f"\n{'='*60}")
-    print("KNOCKOUT TOURNAMENT COMPLETE!")
-    print(f"{'='*60}\n")
+    print(f"\n{bold_cyan('='*60)}")
+    print(bold_green("KNOCKOUT TOURNAMENT COMPLETE!"))
+    print(f"{bold_cyan('='*60)}\n")
 
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM files')
@@ -190,25 +191,25 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
         pattern=pattern
     )
 
-    print("Type 'reset' to start a new tournament and export results to CSV, or 'q' to quit.")
+    print(f"Type '{bold('reset')}' to start a new tournament and export results to CSV, or '{bold('q')}' to quit.")
 
     should_exit = False
     while True:
         user_input = input("> ").strip().lower()
         if user_input == 'reset':
             csv_path = export_knockout_results(conn, target_dir)
-            print(f"\nResults exported to: {csv_path}\n")
+            print(f"\n{green('Results exported to:')} {cyan(csv_path)}\n")
 
             clear_knockout_state(conn)
             clear_knockout_pool(conn)
             eliminated.clear()
             tournament_pool.clear()
-            print("Knockout tournament reset! All players are back in.\n")
+            print(green("Knockout tournament reset! All players are back in.\n"))
             break
         elif user_input in ['q', 'quit']:
             should_exit = True
             break
         else:
-            print("Invalid input. Please type 'reset' or 'q'.\n")
+            print(yellow("Invalid input. Please type 'reset' or 'q'.\n"))
 
     return should_exit

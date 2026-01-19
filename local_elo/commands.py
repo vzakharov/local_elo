@@ -11,6 +11,7 @@ from .game import select_first_player, select_second_player
 from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
 )
+from .colors import red, yellow, dim
 
 
 
@@ -33,12 +34,12 @@ def main():
 
     # Validate power parameter
     if args.power <= 0:
-        print("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)")
+        print(red("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)"))
         sys.exit(1)
 
     # Validate pool_size parameter
     if args.pool_size is not None and args.pool_size < 2:
-        print("Error: Pool size must be at least 2")
+        print(red("Error: Pool size must be at least 2"))
         sys.exit(1)
 
     # Initialize database
@@ -72,7 +73,7 @@ def main():
                     files = [f for f in files if f[0] not in eliminated]
 
             if len(files) == 0:
-                print("No files found matching the pattern.")
+                print(yellow("No files found matching the pattern."))
                 break
 
             if len(files) == 1:
@@ -83,7 +84,7 @@ def main():
                     if should_exit:
                         break
                 else:
-                    print("Only one file found. Need at least two files for comparison.")
+                    print(yellow("Only one file found. Need at least two files for comparison."))
                     break
 
             # Select two players
@@ -91,7 +92,7 @@ def main():
             second_player = select_second_player(files, first_player)
 
             if second_player is None:
-                print("Could not find a second player.")
+                print(red("Could not find a second player."))
                 break
 
             # Display matchup
@@ -119,7 +120,7 @@ def main():
             matchup_display = format_matchup(
                 display_path_a, elo_a, rank_a, format_record(first_player),
                 display_path_b, elo_b, rank_b, format_record(second_player),
-                win_prob_display
+                win_prob_display, prob_a
             )
             print(matchup_display)
 
@@ -152,7 +153,7 @@ def main():
                     matchup_display = format_matchup(
                         display_path_a, elo_a, rank_a, format_record(first_player),
                         display_path_b, elo_b, rank_b, format_record(second_player),
-                        win_prob_display
+                        win_prob_display, prob_a
                     )
                     print(matchup_display)
                     continue
@@ -175,7 +176,7 @@ def main():
 
                 # Check for knockout-only commands
                 if user_input.upper() in ['A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-'] and not args.knockout:
-                    print("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode")
+                    print(red("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode"))
                     continue
 
                 # Validate input
@@ -190,11 +191,11 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, or reset")
+                        print(yellow("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, or reset"))
                     else:
-                        print("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem a/b/ab")
+                        print(yellow("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem a/b/ab"))
 
     except KeyboardInterrupt:
-        print("\n\nGoodbye!")
+        print(dim("\n\nGoodbye!"))
     finally:
         conn.close()
