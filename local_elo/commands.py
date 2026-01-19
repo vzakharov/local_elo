@@ -3,13 +3,15 @@ import sys
 import os
 import subprocess
 import argparse
+import random
 from typing import Optional, List, Tuple
 
-from . import DEFAULT_LEADERBOARD_SIZE
+from . import DEFAULT_LEADERBOARD_SIZE, DEFAULT_ELO
 from .db import (
     init_db, sync_files, get_active_files, load_knockout_state,
     save_elimination, clear_knockout_state, get_rankings, remove_entry_from_database,
-    get_knockout_stats, export_knockout_results
+    get_knockout_stats, export_knockout_results, save_knockout_pool, load_knockout_pool,
+    clear_knockout_pool
 )
 from .elo import calculate_win_probability, record_game, redistribute_elo_delta
 from .files import trash_file, apply_wildcard_rename
@@ -245,7 +247,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
         return path_a, path_b
 
 
-def handle_reset_command(conn: sqlite3.Connection, eliminated: set) -> bool:
+def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_pool: set) -> bool:
     """
     Handle the 'reset' command in knockout mode.
     Returns True if should break out of input loop to re-sync.
@@ -254,7 +256,9 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set) -> bool:
     confirm = input("Are you sure you want to reset the knockout tournament? All eliminations will be cleared. (y/N): ").strip().lower()
     if confirm == 'y' or confirm == 'yes':
         clear_knockout_state(conn)
+        clear_knockout_pool(conn)
         eliminated.clear()  # Clear in-memory set
+        tournament_pool.clear()  # Clear in-memory set
         print("Knockout tournament has been reset! All players are back in.\n")
         return True
     else:
@@ -265,7 +269,7 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set) -> bool:
 def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: int,
                        elo_a: float, elo_b: float, path_a: str, path_b: str,
                        target_dir: str, knockout_mode: bool, eliminated: set,
-                       pattern: str) -> None:
+                       pattern: str, tournament_pool: set) -> None:
     """
     Handle game result input (A, B, t, a-, b-, a+, b+, ta-, tb-, t-).
     Records the game, updates rankings, and handles knockout eliminations.
@@ -336,7 +340,12 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
             print("  Tie - no one eliminated.\n")
 
         # Show remaining players count
-        remaining_count = len([f for f in get_active_files(conn, target_dir, pattern) if f[0] not in eliminated])
+        if tournament_pool:
+            remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
+                                  if f[0] in tournament_pool and f[0] not in eliminated])
+        else:
+            remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
+                                  if f[0] not in eliminated])
         print(f"Players remaining: {remaining_count}\n")
 
 
@@ -352,6 +361,8 @@ def main():
                        help='Knockout mode: eliminate losers until only one remains')
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
+    parser.add_argument('-n', '--pool-size', dest='pool_size', type=int, default=None,
+                       help='Limit pool size for competitor selection in knockout mode (default: use all remaining files)')
     args = parser.parse_args()
 
     # Validate power parameter
@@ -359,26 +370,70 @@ def main():
         print("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)")
         sys.exit(1)
 
+    # Validate pool_size parameter
+    if args.pool_size is not None and args.pool_size < 2:
+        print("Error: Pool size must be at least 2")
+        sys.exit(1)
+
     # Initialize database
     conn = init_db(args.target_dir)
 
     try:
-        # Initialize eliminated set
+        # Initialize eliminated set and tournament pool
         if args.knockout:
             # Load existing knockout state from database
             eliminated = load_knockout_state(conn)
+            tournament_pool = load_knockout_pool(conn)
 
-            if eliminated:
-                # Resume existing knockout tournament
+            if eliminated or tournament_pool:
+                # Existing tournament in progress
+                if args.pool_size:
+                    # User specified pool size but tournament already exists
+                    pool_count = len(tournament_pool) if tournament_pool else None
+                    if pool_count and pool_count != args.pool_size:
+                        print(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {args.pool_size}")
+                        print("Options:")
+                        print("  1. Continue without -n flag to resume existing tournament")
+                        print("  2. Run 'reset' command to start a new tournament with new pool size")
+                        sys.exit(1)
+
+                # Resume existing tournament
                 stats = get_knockout_stats(conn, args.target_dir, args.pattern)
+                competing_count = len(tournament_pool) - len(eliminated) if tournament_pool else stats['competing_count']
                 print(f"Resuming knockout tournament...")
+                if tournament_pool:
+                    print(f"  Tournament pool size: {len(tournament_pool)}")
                 print(f"  Total files in database: {stats['total_count']}")
                 print(f"  Already eliminated: {stats['eliminated_count']}")
-                print(f"  Still competing: {stats['competing_count']}")
+                print(f"  Still competing: {competing_count}")
                 print()
+            else:
+                # New tournament - initialize pool if specified
+                if args.pool_size:
+                    all_files = get_active_files(conn, args.target_dir, args.pattern)
+                    if len(all_files) < args.pool_size:
+                        print(f"ERROR: Only {len(all_files)} files available, but pool size is {args.pool_size}")
+                        sys.exit(1)
+
+                    # Select pool using weighted selection
+                    pool_weights = []
+                    for f in all_files:
+                        elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+                        games_played = f[3] + f[4] + f[5]
+                        games_weight = 1.0 / ((games_played + 1) ** args.power)
+                        pool_weights.append(elo_weight * games_weight)
+
+                    selected_files = random.choices(all_files, weights=pool_weights, k=args.pool_size)
+                    tournament_pool = {f[0] for f in selected_files}  # Extract file IDs
+                    save_knockout_pool(conn, tournament_pool)
+                    print(f"Selected {args.pool_size} competitors for knockout tournament")
+                    print()
+                else:
+                    tournament_pool = set()  # Empty = all files participate
         else:
-            # Not in knockout mode, but keep variable for consistency
+            # Not in knockout mode, but keep variables for consistency
             eliminated = set()
+            tournament_pool = set()
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
@@ -397,9 +452,14 @@ def main():
             # Get active files
             files = get_active_files(conn, args.target_dir, args.pattern)
 
-            # In knockout mode, filter out eliminated players
+            # In knockout mode, filter by tournament pool and eliminated players
             if args.knockout:
-                files = [f for f in files if f[0] not in eliminated]
+                if tournament_pool:
+                    # Only include files in the tournament pool
+                    files = [f for f in files if f[0] in tournament_pool and f[0] not in eliminated]
+                else:
+                    # No pool restriction, just filter eliminated
+                    files = [f for f in files if f[0] not in eliminated]
 
             if len(files) == 0:
                 print("No files found matching the pattern.")
@@ -440,7 +500,9 @@ def main():
 
                             # Clear knockout state and restart
                             clear_knockout_state(conn)
+                            clear_knockout_pool(conn)
                             eliminated.clear()
+                            tournament_pool.clear()
                             print("Knockout tournament reset! All players are back in.\n")
                             break  # Exit input loop, continue to next matchup
                         elif user_input in ['q', 'quit']:
@@ -524,7 +586,7 @@ def main():
 
                 # Check for reset command (knockout mode only)
                 if user_input.lower() == 'reset':
-                    if handle_reset_command(conn, eliminated):
+                    if handle_reset_command(conn, eliminated, tournament_pool):
                         # Break out of input loop to re-sync and start fresh
                         break
                     else:
@@ -551,7 +613,7 @@ def main():
 
                     handle_game_result(conn, result, id_a, id_b, elo_a, elo_b,
                                      path_a, path_b, args.target_dir, args.knockout,
-                                     eliminated, args.pattern)
+                                     eliminated, args.pattern, tournament_pool)
                     break
                 else:
                     if args.knockout:

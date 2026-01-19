@@ -49,6 +49,14 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create knockout_pool table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knockout_pool (
+            file_id INTEGER PRIMARY KEY,
+            FOREIGN KEY (file_id) REFERENCES files(id)
+        )
+    ''')
+
     conn.commit()
     return conn
 
@@ -100,6 +108,29 @@ def clear_knockout_state(conn: sqlite3.Connection) -> None:
     """Clear all knockout state from database."""
     cursor = conn.cursor()
     cursor.execute('DELETE FROM knockout_state')
+    conn.commit()
+
+
+def save_knockout_pool(conn: sqlite3.Connection, file_ids: set) -> None:
+    """Save the tournament pool to database."""
+    cursor = conn.cursor()
+    for file_id in file_ids:
+        cursor.execute('INSERT OR IGNORE INTO knockout_pool (file_id) VALUES (?)', (file_id,))
+    conn.commit()
+
+
+def load_knockout_pool(conn: sqlite3.Connection) -> set:
+    """Load tournament pool file IDs from database."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_id FROM knockout_pool')
+    pool_ids = {row[0] for row in cursor.fetchall()}
+    return pool_ids
+
+
+def clear_knockout_pool(conn: sqlite3.Connection) -> None:
+    """Clear the tournament pool table."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_pool')
     conn.commit()
 
 
