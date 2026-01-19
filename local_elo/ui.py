@@ -3,7 +3,7 @@ import os
 import re
 from typing import Tuple, Optional
 
-from . import DEFAULT_LEADERBOARD_SIZE
+from .constants import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
 
 

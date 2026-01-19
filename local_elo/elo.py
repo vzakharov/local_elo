@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Tuple
 
-from . import K_FACTOR, DEFAULT_ELO
+from .constants import K_FACTOR, DEFAULT_ELO
 
 
 def calculate_win_probability(elo_a: float, elo_b: float) -> float:

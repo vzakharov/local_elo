@@ -3,9 +3,9 @@ import sys
 import os
 import argparse
 
-from .db import init_db, sync_files, get_active_files, get_rankings
+from .db import init_db, get_active_files, get_rankings
 from .elo import calculate_win_probability
-from .files import handle_open_command, handle_rename_command, handle_rem_command
+from .files import handle_open_command, handle_rename_command, handle_rem_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_matchup
 from .game import select_first_player, select_second_player
 from .knockout import (

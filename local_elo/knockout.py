@@ -1,9 +1,9 @@
 import sqlite3
 import sys
 import random
-from typing import Optional, Tuple, set
+from typing import Optional, Tuple
 
-from . import DEFAULT_ELO
+from .constants import DEFAULT_ELO
 from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,

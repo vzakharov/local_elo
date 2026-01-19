@@ -1,7 +1,7 @@
 import random
 from typing import List, Tuple
 
-from . import DEFAULT_ELO
+from .constants import DEFAULT_ELO
 from .elo import calculate_win_probability
 
 

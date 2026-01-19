@@ -5,8 +5,7 @@ import csv
 from datetime import datetime
 from typing import List, Tuple
 
-from . import DEFAULT_ELO, DB_NAME
-from .files import discover_files
+from .constants import DEFAULT_ELO, DB_NAME
 
 
 def init_db(target_dir: str = '.') -> sqlite3.Connection:
@@ -73,13 +72,6 @@ def add_file_to_db(conn: sqlite3.Connection, filepath: str) -> None:
     except sqlite3.IntegrityError:
         # File already exists in database
         pass
-
-
-def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') -> None:
-    """Sync discovered files with the database."""
-    files = discover_files(pattern, target_dir)
-    for filepath in files:
-        add_file_to_db(conn, filepath)
 
 
 def load_knockout_state(conn: sqlite3.Connection) -> set:

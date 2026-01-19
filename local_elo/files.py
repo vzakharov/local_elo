@@ -7,8 +7,8 @@ import subprocess
 import sqlite3
 from typing import List, Tuple, Optional
 
-from . import DB_NAME
-from .db import sync_files, remove_entry_from_database
+from .constants import DB_NAME
+from .db import add_file_to_db, remove_entry_from_database
 from .elo import redistribute_elo_delta
 
 
@@ -39,6 +39,13 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
             files.append(filename)
 
     return files
+
+
+def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') -> None:
+    """Sync discovered files with the database."""
+    files = discover_files(pattern, target_dir)
+    for filepath in files:
+        add_file_to_db(conn, filepath)
 
 
 def trash_file(filepath: str, target_dir: str) -> None:
