@@ -4,7 +4,7 @@ import re
 from typing import Tuple
 
 from . import DEFAULT_LEADERBOARD_SIZE
-from .db import get_rankings
+from .db import get_rankings, get_knockout_results
 
 
 def format_record_values(wins: int, losses: int, ties: int) -> str:
@@ -68,20 +68,9 @@ def display_leaderboard(
         show_all_files: If True, show all DB files regardless of pattern/filesystem
         pattern: Regex pattern to filter files (ignored if show_all_files=True)
     """
-    cursor = conn.cursor()
-
     if sort_by == 'knockout':
-        # Join with knockout_state for elimination-based sorting
-        cursor.execute('''
-            SELECT f.path, f.elo, f.wins, f.losses, f.ties, k.eliminated_at
-            FROM files f
-            LEFT JOIN knockout_state k ON f.id = k.file_id
-            ORDER BY
-                CASE WHEN k.eliminated_at IS NULL THEN 0 ELSE 1 END,
-                k.eliminated_at DESC,
-                f.elo DESC
-        ''')
-        all_results = cursor.fetchall()
+        # Get results filtered by pool (if pool exists)
+        all_results = get_knockout_results(conn)
 
         # Filter results if needed
         if not show_all_files:
@@ -120,6 +109,7 @@ def display_leaderboard(
         print()
     else:
         # Original elo-based sorting
+        cursor = conn.cursor()
         cursor.execute(
             'SELECT path, elo, wins, losses, ties FROM files ORDER BY elo DESC LIMIT ?',
             (limit,)

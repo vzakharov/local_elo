@@ -202,6 +202,34 @@ def get_rankings(conn: sqlite3.Connection) -> dict:
     return rankings
 
 
+def get_knockout_results(conn: sqlite3.Connection) -> list:
+    """
+    Get knockout tournament results, filtered by pool if one exists.
+    Returns list of (path, elo, wins, losses, ties, eliminated_at) tuples,
+    sorted by elimination order (winner first, then latest eliminations).
+    """
+    cursor = conn.cursor()
+
+    # Check if pool exists
+    cursor.execute('SELECT COUNT(*) FROM knockout_pool')
+    pool_exists = cursor.fetchone()[0] > 0
+
+    # Conditionally add pool filter
+    pool_join = 'INNER JOIN knockout_pool p ON f.id = p.file_id' if pool_exists else ''
+
+    cursor.execute(f'''
+        SELECT f.path, f.elo, f.wins, f.losses, f.ties, k.eliminated_at
+        FROM files f
+        {pool_join}
+        LEFT JOIN knockout_state k ON f.id = k.file_id
+        ORDER BY
+            CASE WHEN k.eliminated_at IS NULL THEN 0 ELSE 1 END,
+            k.eliminated_at DESC,
+            f.elo DESC
+    ''')
+    return cursor.fetchall()
+
+
 def export_knockout_results(conn: sqlite3.Connection, target_dir: str) -> str:
     """
     Export knockout tournament results to CSV.
@@ -210,19 +238,7 @@ def export_knockout_results(conn: sqlite3.Connection, target_dir: str) -> str:
     This should only be called when the tournament has naturally completed
     (exactly 1 uneliminated player remains).
     """
-    cursor = conn.cursor()
-
-    # Query all files sorted by elimination order (winner first, then latest eliminations)
-    cursor.execute('''
-        SELECT f.path, f.elo, f.wins, f.losses, f.ties, k.eliminated_at
-        FROM files f
-        LEFT JOIN knockout_state k ON f.id = k.file_id
-        ORDER BY
-            CASE WHEN k.eliminated_at IS NULL THEN 0 ELSE 1 END,
-            k.eliminated_at DESC,
-            f.elo DESC
-    ''')
-    results = cursor.fetchall()
+    results = get_knockout_results(conn)
 
     # Generate CSV filename with timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
