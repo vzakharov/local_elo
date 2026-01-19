@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import re
-from typing import Tuple
+from typing import Tuple, Optional
 
 from . import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
@@ -171,3 +171,38 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
         display_path = os.path.join(target_dir, path) if target_dir != '.' else path
         print(f"  {display_path}: {movement} | New Elo: {int(new_elo)}")
     print()
+
+
+def parse_top_command(user_input: str) -> Optional[int]:
+    """Parse 'top N' command and return the number, or None if not a top command."""
+    parts = user_input.strip().lower().split()
+    if not parts or parts[0] != 'top':
+        return None
+
+    if len(parts) == 1:
+        return DEFAULT_LEADERBOARD_SIZE
+
+    try:
+        return int(parts[1])
+    except (ValueError, IndexError):
+        return DEFAULT_LEADERBOARD_SIZE
+
+
+def display_welcome_message(knockout_mode: bool) -> None:
+    """Display welcome message and available commands."""
+    if knockout_mode:
+        print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
+        print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem a/b/ab (remove entry)")
+        print("Note: Losers are eliminated! Last one standing wins.")
+        print("Press Ctrl+C to exit\n")
+    else:
+        print("Local Elo - File Ranking Tool")
+        print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem a/b/ab (remove entry)")
+        print("Press Ctrl+C to exit\n")
+
+
+def format_matchup(display_path_a: str, elo_a: float, rank_a, record_a: str,
+                   display_path_b: str, elo_b: float, rank_b, record_b: str,
+                   win_prob_display: str) -> str:
+    """Format matchup display string."""
+    return f"A: {display_path_a} ({int(elo_a)} / #{rank_a} / {record_a})\nvs\nB: {display_path_b} ({int(elo_b)} / #{rank_b} / {record_b})\nWin probability: {win_prob_display}"
