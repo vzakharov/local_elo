@@ -145,7 +145,18 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
                 games_weight = 1.0 / ((games_played + 1) ** power)
                 pool_weights.append(elo_weight * games_weight)
 
-            selected_files = random.choices(all_files, weights=pool_weights, k=pool_size)
+            # Use weighted sampling WITHOUT replacement to ensure exactly pool_size unique entries
+            selected_files = []
+            remaining_files = list(all_files)
+            remaining_weights = list(pool_weights)
+
+            for _ in range(pool_size):
+                chosen = random.choices(remaining_files, weights=remaining_weights, k=1)[0]
+                idx = remaining_files.index(chosen)
+                selected_files.append(chosen)
+                remaining_files.pop(idx)
+                remaining_weights.pop(idx)
+
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
             print(f"Selected {pool_size} competitors for knockout tournament")
