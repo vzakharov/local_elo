@@ -34,65 +34,48 @@ def parse_top_command(user_input: str) -> Optional[int]:
         return DEFAULT_LEADERBOARD_SIZE
 
 
-def handle_rem_command(conn: sqlite3.Connection, pattern: str, current_id_a: int, current_id_b: int,
-                       target_dir: str, files: List[Tuple[int, str, float, int, int, int]],
-                       eliminated: set) -> bool:
+def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
+                       path_a: str, path_b: str, target_dir: str,
+                       files: List[Tuple], eliminated: set, tournament_pool: set) -> bool:
     """
-    Remove entry matching pattern from database and filesystem.
-
-    Args:
-        conn: Database connection
-        pattern: Filename pattern (supports wildcards via fnmatch)
-        current_id_a, current_id_b: IDs of current matchup
-        target_dir: Directory containing files
-        files: List of tuples (id, path, elo, wins, losses, ties)
-        eliminated: Set of eliminated IDs (knockout mode)
-
-    Returns:
-        True if current matchup should be re-selected, False otherwise
+    Remove competitor(s) by reference: 'a', 'b', or 'ab'.
+    Returns True to signal need for new matchup.
     """
-    import fnmatch
-
-    matching_files = [f for f in files if fnmatch.fnmatch(f[1], pattern)]
-
-    if not matching_files:
-        print(f"No entry found matching pattern: {pattern}")
+    arg = arg.lower()
+    if arg not in ('a', 'b', 'ab', 'ba'):
+        print(f"  Invalid argument: '{arg}'. Use 'a', 'b', or 'ab'.")
         return False
 
-    if len(matching_files) > 1:
-        print(f"Pattern matches multiple entries:")
-        for f in matching_files:
-            print(f"  - {f[1]} (Elo: {f[2]:.1f})")
-        print("Please be more specific.")
-        return False
+    to_remove = []
+    if 'a' in arg:
+        to_remove.append((id_a, path_a))
+    if 'b' in arg:
+        to_remove.append((id_b, path_b))
 
-    target_file = matching_files[0]
-    file_id, file_path, file_elo = target_file[0], target_file[1], target_file[2]
+    for file_id, file_path in to_remove:
+        # Get current Elo
+        cursor = conn.cursor()
+        cursor.execute("SELECT elo FROM files WHERE id = ?", (file_id,))
+        row = cursor.fetchone()
+        if not row:
+            continue
 
-    display_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
-    full_file_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
+        file_elo = row[0]
+        delta = file_elo - 1000
 
-    print(f"\nAbout to remove: {display_path}")
-    print(f"Current Elo: {file_elo:.1f}")
-    delta = file_elo - 1000
-    print(f"Delta to redistribute: {delta:+.1f}")
-    confirm = input("Confirm removal? (y/n): ").strip().lower()
+        # Use existing functions for removal
+        full_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
+        redistribute_elo_delta(conn, delta, file_id)
+        trash_file(full_path, target_dir)
+        remove_entry_from_database(conn, file_id)
 
-    if confirm != 'y' and confirm != 'yes':
-        print("Removal cancelled.")
-        return False
-
-    skip_matchup = (file_id == current_id_a or file_id == current_id_b)
-    redistribute_elo_delta(conn, delta, file_id)
-    trash_file(full_file_path, target_dir)
-    remove_entry_from_database(conn, file_id)
-
-    if file_id in eliminated:
+        # Clean up in-memory state
         eliminated.discard(file_id)
+        tournament_pool.discard(file_id)
 
-    print(f"✓ Removed {file_path} and redistributed {delta:+.1f} Elo")
+        print(f"✓ Removed {file_path} and redistributed {delta:+.1f} Elo")
 
-    return skip_matchup
+    return True
 
 
 def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
@@ -437,12 +420,12 @@ def main():
 
         if args.knockout:
             print("Local Elo - File Ranking Tool (KNOCKOUT MODE)")
-            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem <pattern> (remove entry)")
+            print("Commands: A (file A wins), B (file B wins), a-/b- (win but remove winner), a+/b+ (win but loser stays), t (tie), ta-/tb-/t- (tie but eliminate a/b/both), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem a/b/ab (remove entry)")
             print("Note: Losers are eliminated! Last one standing wins.")
             print("Press Ctrl+C to exit\n")
         else:
             print("Local Elo - File Ranking Tool")
-            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem <pattern> (remove entry)")
+            print("Commands: A (file A wins), B (file B wins), t (tie), o (open files), top [N] (show leaderboard), ren <old> <new> (rename file), rem a/b/ab (remove entry)")
             print("Press Ctrl+C to exit\n")
 
         while True:
@@ -556,9 +539,9 @@ def main():
             # Get user input
             while True:
                 if args.knockout:
-                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/reset): ").strip()
+                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/rem a/b/ab/reset): ").strip()
                 else:
-                    user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>): ").strip()
+                    user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>/rem a/b/ab): ").strip()
 
                 # Check for top command
                 top_n = parse_top_command(user_input)
@@ -595,8 +578,8 @@ def main():
 
                 # Check for rem command
                 if user_input.lower().startswith('rem '):
-                    pattern = user_input[4:].strip()
-                    if handle_rem_command(conn, pattern, id_a, id_b, args.target_dir, files, eliminated):
+                    arg = user_input[4:].strip()
+                    if handle_rem_command(conn, arg, id_a, id_b, path_a, path_b, args.target_dir, files, eliminated, tournament_pool):
                         break
                     continue
 
@@ -617,9 +600,9 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem <pattern>, or reset")
+                        print("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, or reset")
                     else:
-                        print("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem <pattern>")
+                        print("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem a/b/ab")
 
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
