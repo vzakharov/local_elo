@@ -100,16 +100,6 @@ def display_leaderboard(
         # Find max Elo for scaling (use first entry which is the winner)
         max_elo = results[0][1] if results else 1000
 
-        # Build file ID map for pool checking
-        file_id_map = {}
-        if tournament_pool:
-            cursor = conn.cursor()
-            for path, _, _, _, _, _ in results:
-                cursor.execute('SELECT id FROM files WHERE path = ?', (path,))
-                row = cursor.fetchone()
-                if row:
-                    file_id_map[path] = row[0]
-
         print(f"\n{bold_cyan('Knockout Tournament Results:')}")
         for i, (path, elo, wins, losses, ties, eliminated_at) in enumerate(results, 1):
             display_path = get_filename(path)
@@ -120,19 +110,8 @@ def display_leaderboard(
             # Format record string
             record = format_record_values(wins, losses, ties)
 
-            # Check if file is in tournament pool
-            pool_marker = ''
-            if tournament_pool:
-                file_id = file_id_map.get(path)
-                if file_id and file_id in tournament_pool:
-                    # Star for still competing, circle for eliminated
-                    if eliminated_at is None:  # Still competing (winner)
-                        pool_marker = f" {yellow('★')}"
-                    else:  # Eliminated
-                        pool_marker = f" {yellow('●')}"
-
             # Print: histogram | rank | elo | record | path
-            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {pool_marker} {display_path}")
+            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
         print()
     else:
         # Original elo-based sorting
@@ -150,6 +129,21 @@ def display_leaderboard(
         # Find max Elo for scaling the histogram
         max_elo = results[0][1]
 
+        # Build elimination status map for pool checking
+        elimination_status = {}
+        if tournament_pool:
+            cursor_pool = conn.cursor()
+            for path, _, _, _, _ in results:
+                cursor_pool.execute('SELECT id FROM files WHERE path = ?', (path,))
+                row = cursor_pool.fetchone()
+                if row:
+                    file_id = row[0]
+                    if file_id in tournament_pool:
+                        # Check if eliminated
+                        cursor_pool.execute('SELECT eliminated_at FROM knockout_state WHERE file_id = ?', (file_id,))
+                        elim_row = cursor_pool.fetchone()
+                        elimination_status[path] = elim_row[0] if elim_row else None
+
         print(f"\n{bold_cyan(f'Top {limit} Files:')}")
         for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
             display_path = get_filename(path)
@@ -160,8 +154,18 @@ def display_leaderboard(
             # Format record string
             record = format_record_values(wins, losses, ties)
 
+            # Check if file is in tournament pool
+            pool_marker = ''
+            if path in elimination_status:
+                eliminated_at = elimination_status[path]
+                # Star for still competing, circle for eliminated
+                if eliminated_at is None:
+                    pool_marker = f" {yellow('★')}"
+                else:
+                    pool_marker = f" {yellow('●')}"
+
             # Print: histogram | rank | elo | record | path
-            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
+            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}){pool_marker} {display_path}")
         print()
 
 
