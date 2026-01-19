@@ -12,6 +12,7 @@ from .db import (
 from .elo import calculate_win_probability, record_game
 from .ui import display_leaderboard, display_ranking_changes
 from .colors import bold, bold_red, bold_green, bold_cyan, green, red, yellow, cyan, dim
+from .utils import get_filename
 
 
 def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: int,
@@ -42,32 +43,40 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
             if remove_winner:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                print(f"  {bold_green(path_a)} wins but is {bold_red('REMOVED')} from tournament!\n")
+                display_name = get_filename(path_a)
+                print(f"  {bold_green(display_name)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                print(f"  {bold_green(path_a)} wins, but both players stay in tournament!\n")
+                display_name = get_filename(path_a)
+                print(f"  {bold_green(display_name)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                print(f"  {bold_red(path_b)} has been {bold_red('ELIMINATED')}!\n")
+                display_name = get_filename(path_a)
+                print(f"  {bold_green(display_name)} {bold_green('PROCEEDS')}!\n")
         elif result in ['B', 'B-', 'B+']:
             if remove_winner:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                print(f"  {bold_green(path_b)} wins but is {bold_red('REMOVED')} from tournament!\n")
+                display_name = get_filename(path_b)
+                print(f"  {bold_green(display_name)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                print(f"  {bold_green(path_b)} wins, but both players stay in tournament!\n")
+                display_name = get_filename(path_b)
+                print(f"  {bold_green(display_name)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                print(f"  {bold_red(path_a)} has been {bold_red('ELIMINATED')}!\n")
+                display_name = get_filename(path_b)
+                print(f"  {bold_green(display_name)} {bold_green('PROCEEDS')}!\n")
         elif result == 'TA-':
             eliminated.add(id_a)
             save_elimination(conn, id_a)
-            print(f"  Tie, but {bold_red(path_a)} is {bold_red('REMOVED')} from tournament!\n")
+            display_name = get_filename(path_a)
+            print(f"  Tie, but {bold_red(display_name)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'TB-':
             eliminated.add(id_b)
             save_elimination(conn, id_b)
-            print(f"  Tie, but {bold_red(path_b)} is {bold_red('REMOVED')} from tournament!\n")
+            display_name = get_filename(path_b)
+            print(f"  Tie, but {bold_red(display_name)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'T-':
             eliminated.add(id_a)
             eliminated.add(id_b)
@@ -188,7 +197,8 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
         target_dir=target_dir,
         sort_by='knockout',
         show_all_files=True,
-        pattern=pattern
+        pattern=pattern,
+        tournament_pool=tournament_pool
     )
 
     print(f"Type '{bold('reset')}' to start a new tournament and export results to CSV, or '{bold('q')}' to quit.")

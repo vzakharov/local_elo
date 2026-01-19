@@ -12,6 +12,7 @@ from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
 )
 from .colors import red, yellow, dim
+from .utils import get_filename, extensions_to_pattern
 
 
 
@@ -22,8 +23,8 @@ def main():
     parser = argparse.ArgumentParser(description='Local Elo - Rank files using Elo ratings')
     parser.add_argument('target_dir', nargs='?', default='.',
                        help='Target directory to search for files (default: current directory)')
-    parser.add_argument('-m', '--match', dest='pattern', default='.*',
-                       help='Regex pattern for matching files (default: match all files)')
+    parser.add_argument('-e', '--extension', dest='extensions', default=None,
+                       help='File extensions to include (comma-separated, e.g., "py,js,ts")')
     parser.add_argument('-k', '--knockout', action='store_true',
                        help='Knockout mode: eliminate losers until only one remains')
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
@@ -31,6 +32,12 @@ def main():
     parser.add_argument('-n', '--pool-size', dest='pool_size', type=int, default=None,
                        help='Limit pool size for competitor selection in knockout mode (default: use all remaining files)')
     args = parser.parse_args()
+
+    # Convert extensions to regex pattern
+    if args.extensions:
+        pattern = extensions_to_pattern(args.extensions)
+    else:
+        pattern = '.*'  # Match all files by default
 
     # Validate power parameter
     if args.power <= 0:
@@ -48,7 +55,7 @@ def main():
     try:
         if args.knockout:
             eliminated, tournament_pool = initialize_knockout_tournament(
-                conn, args.target_dir, args.pattern, args.pool_size, args.power
+                conn, args.target_dir, pattern, args.pool_size, args.power
             )
         else:
             eliminated = set()
@@ -58,10 +65,10 @@ def main():
 
         while True:
             # Sync files with database
-            sync_files(conn, args.pattern, args.target_dir)
+            sync_files(conn, pattern, args.target_dir)
 
             # Get active files
-            files = get_active_files(conn, args.target_dir, args.pattern)
+            files = get_active_files(conn, args.target_dir, pattern)
 
             # In knockout mode, filter by tournament pool and eliminated players
             if args.knockout:
@@ -79,7 +86,7 @@ def main():
             if len(files) == 1:
                 if args.knockout:
                     should_exit = handle_winner_screen(
-                        conn, args.target_dir, args.pattern, eliminated, tournament_pool
+                        conn, args.target_dir, pattern, eliminated, tournament_pool
                     )
                     if should_exit:
                         break
@@ -114,8 +121,8 @@ def main():
             else:
                 win_prob_display = f"{prob_b * 100:.0f}% B"
 
-            display_path_a = os.path.join(args.target_dir, path_a) if args.target_dir != '.' else path_a
-            display_path_b = os.path.join(args.target_dir, path_b) if args.target_dir != '.' else path_b
+            display_path_a = get_filename(path_a)
+            display_path_b = get_filename(path_b)
 
             matchup_display = format_matchup(
                 display_path_a, elo_a, rank_a, format_record(first_player),
@@ -134,7 +141,7 @@ def main():
                 # Check for top command
                 top_n = parse_top_command(user_input)
                 if top_n is not None:
-                    display_leaderboard(conn, top_n, args.target_dir)
+                    display_leaderboard(conn, top_n, args.target_dir, tournament_pool=tournament_pool)
                     # Re-display the matchup
                     print(matchup_display)
                     continue
@@ -147,9 +154,9 @@ def main():
                 # Check for rename command
                 if user_input.lower().startswith('ren '):
                     path_a, path_b = handle_rename_command(conn, user_input, args.target_dir,
-                                                           args.pattern, path_a, path_b)
-                    display_path_a = os.path.join(args.target_dir, path_a) if args.target_dir != '.' else path_a
-                    display_path_b = os.path.join(args.target_dir, path_b) if args.target_dir != '.' else path_b
+                                                           pattern, path_a, path_b)
+                    display_path_a = get_filename(path_a)
+                    display_path_b = get_filename(path_b)
                     matchup_display = format_matchup(
                         display_path_a, elo_a, rank_a, format_record(first_player),
                         display_path_b, elo_b, rank_b, format_record(second_player),
@@ -187,7 +194,7 @@ def main():
 
                     handle_game_result(conn, result, id_a, id_b, elo_a, elo_b,
                                      path_a, path_b, args.target_dir, args.knockout,
-                                     eliminated, args.pattern, tournament_pool)
+                                     eliminated, pattern, tournament_pool)
                     break
                 else:
                     if args.knockout:

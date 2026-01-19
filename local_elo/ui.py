@@ -9,6 +9,7 @@ from .colors import (
     green, red, yellow, cyan, dim, bold, bold_cyan, bold_red,
     prob_color, histogram_bar
 )
+from .utils import get_filename
 
 
 def format_record_values(wins: int, losses: int, ties: int) -> str:
@@ -60,7 +61,8 @@ def display_leaderboard(
     target_dir: str = '.',
     sort_by: str = 'elo',
     show_all_files: bool = False,
-    pattern: str = '.*'
+    pattern: str = '.*',
+    tournament_pool: set = None
 ) -> None:
     """
     Display the top N files with histogram visualization.
@@ -98,10 +100,19 @@ def display_leaderboard(
         # Find max Elo for scaling (use first entry which is the winner)
         max_elo = results[0][1] if results else 1000
 
+        # Build file ID map for pool checking
+        file_id_map = {}
+        if tournament_pool:
+            cursor = conn.cursor()
+            for path, _, _, _, _, _ in results:
+                cursor.execute('SELECT id FROM files WHERE path = ?', (path,))
+                row = cursor.fetchone()
+                if row:
+                    file_id_map[path] = row[0]
+
         print(f"\n{bold_cyan('Knockout Tournament Results:')}")
         for i, (path, elo, wins, losses, ties, eliminated_at) in enumerate(results, 1):
-            # Display full path if not in current directory
-            display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+            display_path = get_filename(path)
 
             # Generate histogram (comes FIRST to ensure alignment)
             histogram = create_elo_histogram(elo, max_elo)
@@ -109,8 +120,19 @@ def display_leaderboard(
             # Format record string
             record = format_record_values(wins, losses, ties)
 
+            # Check if file is in tournament pool
+            pool_marker = ''
+            if tournament_pool:
+                file_id = file_id_map.get(path)
+                if file_id and file_id in tournament_pool:
+                    # Star for still competing, circle for eliminated
+                    if eliminated_at is None:  # Still competing (winner)
+                        pool_marker = f" {yellow('★')}"
+                    else:  # Eliminated
+                        pool_marker = f" {yellow('●')}"
+
             # Print: histogram | rank | elo | record | path
-            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {display_path}")
+            print(f"{histogram} {i:2d}. {int(elo):4d} ({record:12s}) {pool_marker} {display_path}")
         print()
     else:
         # Original elo-based sorting
@@ -130,8 +152,7 @@ def display_leaderboard(
 
         print(f"\n{bold_cyan(f'Top {limit} Files:')}")
         for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
-            # Display full path if not in current directory
-            display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+            display_path = get_filename(path)
 
             # Generate histogram (comes FIRST to ensure alignment)
             histogram = create_elo_histogram(elo, max_elo)
@@ -156,8 +177,16 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
     cursor.execute('SELECT id, path, elo FROM files WHERE id IN (?, ?)', (file_a_id, file_b_id))
     files = cursor.fetchall()
 
+    # Create a dict for easy lookup
+    files_dict = {file_id: (path, new_elo) for file_id, path, new_elo in files}
+
     print(f"\n{bold('Rankings:')}")
-    for file_id, path, new_elo in files:
+    # Display in order: A first, then B
+    for file_id in [file_a_id, file_b_id]:
+        if file_id not in files_dict:
+            continue
+
+        path, new_elo = files_dict[file_id]
         old_rank = old_rankings.get(file_id, "N/A")
         new_rank = new_rankings.get(file_id, "N/A")
 
@@ -172,8 +201,7 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
         else:
             movement = red(f"#{new_rank} (down from #{old_rank})")
 
-        # Display full path if not in current directory
-        display_path = os.path.join(target_dir, path) if target_dir != '.' else path
+        display_path = get_filename(path)
         print(f"  {cyan(display_path)}: {movement} | New Elo: {bold(str(int(new_elo)))}")
     print()
 
