@@ -1,9 +1,20 @@
 import sqlite3
 import sys
 import random
-from typing import Optional, Tuple
+from typing import Optional, Tuple, NamedTuple
 
 from .constants import DEFAULT_ELO
+
+
+class PoolConfig(NamedTuple):
+    """Configuration for tournament pool selection."""
+    total_size: int
+    hard_selected: int = 0
+
+    @property
+    def weighted_size(self) -> int:
+        """Number of slots filled by weighted sampling."""
+        return self.total_size - self.hard_selected
 from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,
@@ -114,7 +125,7 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
 
 
 def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pattern: str,
-                                    pool_size: Optional[int], power: float) -> Tuple[set, set]:
+                                    pool_config: Optional[PoolConfig], power: float) -> Tuple[set, set]:
     """
     Initialize or resume a knockout tournament.
     Returns (eliminated, tournament_pool) sets.
@@ -123,10 +134,10 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
     tournament_pool = load_knockout_pool(conn)
 
     if eliminated or tournament_pool:
-        if pool_size:
+        if pool_config:
             pool_count = len(tournament_pool) if tournament_pool else None
-            if pool_count and pool_count != pool_size:
-                print(red(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {pool_size}"))
+            if pool_count and pool_count != pool_config.total_size:
+                print(red(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {pool_config.total_size}"))
                 print("Options:")
                 print(f"  1. Continue without {bold('-n')} flag to resume existing tournament")
                 print(f"  2. Run '{bold('reset')}' command to start a new tournament with new pool size")
@@ -142,34 +153,60 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
         print(f"  Still competing: {green(str(competing_count))}")
         print()
     else:
-        if pool_size:
+        if pool_config:
             all_files = get_active_files(conn, target_dir, pattern)
-            if len(all_files) < pool_size:
-                print(red(f"ERROR: Only {len(all_files)} files available, but pool size is {pool_size}"))
+            if len(all_files) < pool_config.total_size:
+                print(red(f"ERROR: Only {len(all_files)} files available, but pool size is {pool_config.total_size}"))
                 sys.exit(1)
 
-            pool_weights = []
-            for f in all_files:
-                elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
-                games_played = f[3] + f[4] + f[5]
-                games_weight = 1.0 / ((games_played + 1) ** power)
-                pool_weights.append(elo_weight * games_weight)
-
-            # Use weighted sampling WITHOUT replacement to ensure exactly pool_size unique entries
             selected_files = []
-            remaining_files = list(all_files)
-            remaining_weights = list(pool_weights)
 
-            for _ in range(pool_size):
-                chosen = random.choices(remaining_files, weights=remaining_weights, k=1)[0]
-                idx = remaining_files.index(chosen)
-                selected_files.append(chosen)
-                remaining_files.pop(idx)
-                remaining_weights.pop(idx)
+            # Phase 1: Hard-select top N players by Elo
+            if pool_config.hard_selected > 0:
+                sorted_by_elo = sorted(all_files, key=lambda f: f[2], reverse=True)
+                hard_selected = sorted_by_elo[:pool_config.hard_selected]
+                selected_files.extend(hard_selected)
+
+                hard_selected_ids = {f[0] for f in hard_selected}
+                remaining_candidates = [f for f in all_files if f[0] not in hard_selected_ids]
+
+                print(cyan(f"Hard-selected top {pool_config.hard_selected} players by Elo rating"))
+            else:
+                remaining_candidates = all_files
+
+            # Phase 2: Weighted-sample remaining slots
+            if pool_config.weighted_size > 0:
+                pool_weights = []
+                for f in remaining_candidates:
+                    elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+                    games_played = f[3] + f[4] + f[5]
+                    games_weight = 1.0 / ((games_played + 1) ** power)
+                    pool_weights.append(elo_weight * games_weight)
+
+                weighted_selected = []
+                remaining_files = list(remaining_candidates)
+                remaining_weights = list(pool_weights)
+
+                for _ in range(pool_config.weighted_size):
+                    chosen = random.choices(remaining_files, weights=remaining_weights, k=1)[0]
+                    idx = remaining_files.index(chosen)
+                    weighted_selected.append(chosen)
+                    remaining_files.pop(idx)
+                    remaining_weights.pop(idx)
+
+                selected_files.extend(weighted_selected)
+
+                if pool_config.hard_selected > 0:
+                    print(cyan(f"Weighted-sampled {pool_config.weighted_size} additional players"))
 
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
-            print(cyan(f"Selected {pool_size} competitors for knockout tournament"))
+
+            # Summary message
+            if pool_config.hard_selected > 0:
+                print(cyan(f"Tournament pool: {pool_config.total_size} players ({pool_config.hard_selected} guaranteed + {pool_config.weighted_size} sampled)"))
+            else:
+                print(cyan(f"Selected {pool_config.total_size} competitors for knockout tournament"))
             print()
         else:
             tournament_pool = set()

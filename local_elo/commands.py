@@ -15,6 +15,42 @@ from .colors import red, yellow, dim
 from .utils import get_filename, extensions_to_pattern
 
 
+def parse_pool_size(value: str):
+    """Parse pool size argument supporting slash notation for hard-selection."""
+    from .knockout import PoolConfig
+
+    try:
+        if '/' in value:
+            parts = value.split('/')
+            if len(parts) != 2:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid pool size format '{value}'. Expected 'N' or 'N/M'"
+                )
+
+            total = int(parts[0])
+            hard = int(parts[1])
+
+            # Validate constraints
+            if total < 2:
+                raise argparse.ArgumentTypeError("Total pool size must be at least 2")
+            if hard < 0:
+                raise argparse.ArgumentTypeError("Hard-selected count cannot be negative")
+            if hard > total:
+                raise argparse.ArgumentTypeError(
+                    f"Hard-selected count ({hard}) cannot exceed total pool size ({total})"
+                )
+
+            return PoolConfig(total_size=total, hard_selected=hard)
+        else:
+            total = int(value)
+            if total < 2:
+                raise argparse.ArgumentTypeError("Pool size must be at least 2")
+            return PoolConfig(total_size=total, hard_selected=0)
+
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid pool size '{value}'. Must be integer or 'N/M' format"
+        )
 
 
 def main():
@@ -29,8 +65,11 @@ def main():
                        help='Knockout mode: eliminate losers until only one remains')
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
-    parser.add_argument('-n', '--pool-size', dest='pool_size', type=int, default=None,
-                       help='Limit pool size for competitor selection in knockout mode (default: use all remaining files)')
+    parser.add_argument('-n', '--pool-size', dest='pool_size', type=parse_pool_size, default=None,
+                       help='Limit pool size for competitor selection in knockout mode. '
+                            'Use N for total pool size, or N/M to hard-select top M players by Elo. '
+                            'Example: -n 64/32 selects 32 top players + 32 weighted-sampled. '
+                            '(default: use all remaining files)')
     args = parser.parse_args()
 
     # Convert extensions to regex pattern
@@ -42,11 +81,6 @@ def main():
     # Validate power parameter
     if args.power <= 0:
         print(red("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)"))
-        sys.exit(1)
-
-    # Validate pool_size parameter
-    if args.pool_size is not None and args.pool_size < 2:
-        print(red("Error: Pool size must be at least 2"))
         sys.exit(1)
 
     # Initialize database
