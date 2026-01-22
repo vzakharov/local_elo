@@ -23,7 +23,7 @@ from .db import (
 from .elo import calculate_win_probability, record_game
 from .ui import display_leaderboard, display_ranking_changes
 from .colors import bold, bold_red, bold_green, bold_cyan, green, red, yellow, cyan, dim
-from .utils import get_filename
+from .utils import display_name
 
 
 def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: int,
@@ -54,40 +54,40 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
             if remove_winner:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                display_name = get_filename(path_a)
-                print(f"  {bold_green(display_name)} wins but is {bold_red('REMOVED')} from tournament!\n")
+                display_path = display_name(path_a)
+                print(f"  {bold_green(display_path)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                display_name = get_filename(path_a)
-                print(f"  {bold_green(display_name)} wins, but both players stay in tournament!\n")
+                display_path = display_name(path_a)
+                print(f"  {bold_green(display_path)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                display_name = get_filename(path_a)
-                print(f"  {bold_green(display_name)} {bold_green('PROCEEDS')}!\n")
+                display_path = display_name(path_a)
+                print(f"  {bold_green(display_path)} {bold_green('PROCEEDS')}!\n")
         elif result in ['B', 'B-', 'B+']:
             if remove_winner:
                 eliminated.add(id_b)
                 save_elimination(conn, id_b)
-                display_name = get_filename(path_b)
-                print(f"  {bold_green(display_name)} wins but is {bold_red('REMOVED')} from tournament!\n")
+                display_path = display_name(path_b)
+                print(f"  {bold_green(display_path)} wins but is {bold_red('REMOVED')} from tournament!\n")
             elif keep_loser:
-                display_name = get_filename(path_b)
-                print(f"  {bold_green(display_name)} wins, but both players stay in tournament!\n")
+                display_path = display_name(path_b)
+                print(f"  {bold_green(display_path)} wins, but both players stay in tournament!\n")
             else:
                 eliminated.add(id_a)
                 save_elimination(conn, id_a)
-                display_name = get_filename(path_b)
-                print(f"  {bold_green(display_name)} {bold_green('PROCEEDS')}!\n")
+                display_path = display_name(path_b)
+                print(f"  {bold_green(display_path)} {bold_green('PROCEEDS')}!\n")
         elif result == 'TA-':
             eliminated.add(id_a)
             save_elimination(conn, id_a)
-            display_name = get_filename(path_a)
-            print(f"  Tie, but {bold_red(display_name)} is {bold_red('REMOVED')} from tournament!\n")
+            display_path = display_name(path_a)
+            print(f"  Tie, but {bold_red(display_path)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'TB-':
             eliminated.add(id_b)
             save_elimination(conn, id_b)
-            display_name = get_filename(path_b)
-            print(f"  Tie, but {bold_red(display_name)} is {bold_red('REMOVED')} from tournament!\n")
+            display_path = display_name(path_b)
+            print(f"  Tie, but {bold_red(display_path)} is {bold_red('REMOVED')} from tournament!\n")
         elif result == 'T-':
             eliminated.add(id_a)
             eliminated.add(id_b)

@@ -12,7 +12,7 @@ from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
 )
 from .colors import red, yellow, dim
-from .utils import get_filename, extensions_to_pattern
+from .utils import display_name, extensions_to_pattern
 
 
 def parse_pool_size(value: str):
@@ -70,7 +70,14 @@ def main():
                             'Use N for total pool size, or N/M to hard-select top M players by Elo. '
                             'Example: -n 64/32 selects 32 top players + 32 weighted-sampled. '
                             '(default: use all remaining files)')
+    parser.add_argument('-l', '--link', dest='link_pattern', default=None,
+                       help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')
     args = parser.parse_args()
+
+    # Set global link pattern
+    if args.link_pattern:
+        from . import utils
+        utils.LINK_PATTERN = args.link_pattern
 
     # Convert extensions to regex pattern
     if args.extensions:
@@ -155,8 +162,8 @@ def main():
             else:
                 win_prob_display = f"{prob_b * 100:.0f}% B"
 
-            display_path_a = get_filename(path_a)
-            display_path_b = get_filename(path_b)
+            display_path_a = display_name(path_a)
+            display_path_b = display_name(path_b)
 
             matchup_display = format_matchup(
                 display_path_a, elo_a, rank_a, format_record(first_player),
@@ -189,8 +196,8 @@ def main():
                 if user_input.lower().startswith('ren '):
                     path_a, path_b = handle_rename_command(conn, user_input, args.target_dir,
                                                            pattern, path_a, path_b)
-                    display_path_a = get_filename(path_a)
-                    display_path_b = get_filename(path_b)
+                    display_path_a = display_name(path_a)
+                    display_path_b = display_name(path_b)
                     matchup_display = format_matchup(
                         display_path_a, elo_a, rank_a, format_record(first_player),
                         display_path_b, elo_b, rank_b, format_record(second_player),

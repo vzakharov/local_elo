@@ -9,7 +9,7 @@ from .colors import (
     green, red, yellow, cyan, dim, bold, bold_cyan, bold_red,
     prob_color, histogram_bar
 )
-from .utils import get_filename
+from .utils import display_name
 
 
 def format_record_values(wins: int, losses: int, ties: int) -> str:
@@ -102,7 +102,7 @@ def display_leaderboard(
 
         print(f"\n{bold_cyan('Knockout Tournament Results:')}")
         for i, (path, elo, wins, losses, ties, eliminated_at) in enumerate(results, 1):
-            display_path = get_filename(path)
+            display_path = display_name(path)
 
             # Generate histogram (comes FIRST to ensure alignment)
             histogram = create_elo_histogram(elo, max_elo)
@@ -146,7 +146,7 @@ def display_leaderboard(
 
         print(f"\n{bold_cyan(f'Top {limit} Files:')}")
         for i, (path, elo, wins, losses, ties) in enumerate(results, 1):
-            display_path = get_filename(path)
+            display_path = display_name(path)
 
             # Generate histogram (comes FIRST to ensure alignment)
             histogram = create_elo_histogram(elo, max_elo)
@@ -205,7 +205,7 @@ def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
         else:
             movement = red(f"#{new_rank} (down from #{old_rank})")
 
-        display_path = get_filename(path)
+        display_path = display_name(path)
         print(f"  {cyan(display_path)}: {movement} | New Elo: {bold(str(int(new_elo)))}")
     print()
 
