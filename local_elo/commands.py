@@ -16,43 +16,58 @@ from .utils import display_name, extensions_to_pattern
 
 
 def parse_pool_size(value: str):
-    """Parse pool size argument supporting slash notation for hard-selection."""
+    """Parse pool size argument in X/Y format.
+
+    X = total pool size
+    Y = number selected via top-skewing weighted (remaining X-Y use custom weighted)
+
+    Examples:
+      200/50 - Total pool of 200: 150 custom weighted + 50 top-skewing weighted
+      32     - Total pool of 32: all custom weighted (equivalent to 32/0)
+    """
     from .knockout import PoolConfig
 
     try:
         if '/' in value:
             parts = value.split('/')
-            if len(parts) > 3:
+            if len(parts) != 2:
                 raise argparse.ArgumentTypeError(
-                    f"Invalid pool size format '{value}'. Expected 'N', 'N/M', or 'N/M/P'"
+                    f"Invalid pool size format '{value}'. Expected 'X/Y' format"
                 )
 
-            total = int(parts[0])
-            hard = int(parts[1]) if len(parts) > 1 and parts[1] else 0
-            bottom = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+            if not parts[0] or not parts[1]:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid pool size format '{value}'. Both X and Y must be specified"
+                )
+
+            total_size = int(parts[0])
+            top_skewing_size = int(parts[1])
 
             # Validate constraints
-            if total < 2:
-                raise argparse.ArgumentTypeError("Total pool size must be at least 2")
-            if hard < 0:
-                raise argparse.ArgumentTypeError("Hard-selected count cannot be negative")
-            if bottom < 0:
-                raise argparse.ArgumentTypeError("Bottom-selected count cannot be negative")
-            if hard + bottom > total:
+            if total_size < 2:
                 raise argparse.ArgumentTypeError(
-                    f"Top ({hard}) + bottom ({bottom}) cannot exceed total pool size ({total})"
+                    "Total pool size (X) must be at least 2"
+                )
+            if top_skewing_size < 0:
+                raise argparse.ArgumentTypeError(
+                    "Top-skewing size (Y) cannot be negative"
+                )
+            if top_skewing_size > total_size:
+                raise argparse.ArgumentTypeError(
+                    f"Top-skewing size (Y={top_skewing_size}) cannot exceed total size (X={total_size})"
                 )
 
-            return PoolConfig(total_size=total, hard_selected=hard, bottom_selected=bottom)
+            return PoolConfig(total_size=total_size, top_skewing_size=top_skewing_size)
         else:
-            total = int(value)
-            if total < 2:
+            # Single number format: X defaults to all custom weighted (Y=0)
+            total_size = int(value)
+            if total_size < 2:
                 raise argparse.ArgumentTypeError("Pool size must be at least 2")
-            return PoolConfig(total_size=total, hard_selected=0, bottom_selected=0)
+            return PoolConfig(total_size=total_size, top_skewing_size=0)
 
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"Invalid pool size '{value}'. Must be integer, 'N/M', or 'N/M/P' format"
+            f"Invalid pool size '{value}'. Must be integer or 'X/Y' format"
         )
 
 
@@ -69,11 +84,11 @@ def main():
     parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
     parser.add_argument('-n', '--pool-size', dest='pool_size', type=parse_pool_size, default=None,
-                       help='Limit pool size for competitor selection in knockout mode. '
-                            'Use N for total pool size, N/M to hard-select top M players, '
-                            'or N/M/P to select M from top and P from bottom by Elo. '
-                            'Example: -n 64/16/8 selects 16 top + 40 weighted + 8 bottom. '
-                            'Use N//P to select P from bottom with no top selection. '
+                       help='Tournament pool selection in X/Y format. '
+                            'X = total pool size, Y = top-skewing weighted (remaining X-Y custom weighted). '
+                            'Custom weighted uses power param, top-skewing uses hardcoded constant. '
+                            'Examples: -n 200/50 (200 total: 150 custom + 50 top-skewing), '
+                            '-n 32 (32 total: all custom weighted). '
                             '(default: use all remaining files)')
     parser.add_argument('-l', '--link', dest='link_pattern', default=None,
                        help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')

@@ -5,17 +5,23 @@ from typing import Optional, Tuple, NamedTuple
 
 from .constants import DEFAULT_ELO
 
+TOP_SKEWING_POWER = 2.0
+
 
 class PoolConfig(NamedTuple):
-    """Configuration for tournament pool selection."""
+    """Configuration for tournament pool selection.
+
+    total_size: Total number of players in pool (X)
+    top_skewing_size: Number selected via top-skewing weighted sampling (Y)
+    Remaining (X - Y) slots filled by custom weighted sampling (uses power param).
+    """
     total_size: int
-    hard_selected: int = 0
-    bottom_selected: int = 0
+    top_skewing_size: int = 0
 
     @property
-    def weighted_size(self) -> int:
-        """Number of slots filled by weighted sampling."""
-        return self.total_size - self.hard_selected - self.bottom_selected
+    def custom_weighted_size(self) -> int:
+        """Number of slots filled by custom weighted sampling (respects power param)."""
+        return self.total_size - self.top_skewing_size
 from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,
@@ -139,20 +145,13 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
             pool_count = len(tournament_pool) if tournament_pool else None
             if pool_count and pool_count != pool_config.total_size:
                 # Format pool config for display
-                if pool_config.bottom_selected > 0:
-                    if pool_config.hard_selected > 0:
-                        config_str = f"{pool_config.total_size}/{pool_config.hard_selected}/{pool_config.bottom_selected}"
-                    else:
-                        config_str = f"{pool_config.total_size}//{pool_config.bottom_selected}"
-                elif pool_config.hard_selected > 0:
-                    config_str = f"{pool_config.total_size}/{pool_config.hard_selected}"
-                else:
+                if pool_config.top_skewing_size == 0:
                     config_str = str(pool_config.total_size)
+                else:
+                    config_str = f"{pool_config.total_size}/{pool_config.top_skewing_size}"
                 
                 print(red(f"ERROR: Existing knockout tournament has pool size {pool_count}, but you specified -n {config_str}"))
-                print("Options:")
-                print(f"  1. Continue without {bold('-n')} flag to resume existing tournament")
-                print(f"  2. Run '{bold('reset')}' command to start a new tournament with new pool size")
+                print(red("Please use the same pool size or reset with --reset-knockout"))
                 sys.exit(1)
 
         stats = get_knockout_stats(conn, target_dir, pattern)
@@ -174,61 +173,65 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
             selected_files = []
             selected_ids = set()
 
-            # Phase 1: Hard-select top N players by Elo
-            if pool_config.hard_selected > 0:
-                sorted_by_elo = sorted(all_files, key=lambda f: f[2], reverse=True)
-                hard_selected = sorted_by_elo[:pool_config.hard_selected]
-                selected_files.extend(hard_selected)
-                selected_ids.update(f[0] for f in hard_selected)
-                print(cyan(f"Hard-selected top {pool_config.hard_selected} players by Elo rating"))
-
-            # Phase 2: Hard-select bottom P players by Elo (from original pool)
-            if pool_config.bottom_selected > 0:
-                sorted_by_elo_asc = sorted(all_files, key=lambda f: f[2], reverse=False)
-                bottom_selected = []
-                for f in sorted_by_elo_asc:
-                    if f[0] not in selected_ids:
-                        bottom_selected.append(f)
-                        selected_ids.add(f[0])
-                        if len(bottom_selected) >= pool_config.bottom_selected:
-                            break
-                selected_files.extend(bottom_selected)
-                print(cyan(f"Hard-selected bottom {pool_config.bottom_selected} players by Elo rating"))
-
-            # Phase 3: Weighted-sample remaining slots
-            remaining_candidates = [f for f in all_files if f[0] not in selected_ids]
-            if pool_config.weighted_size > 0:
+            # Phase 1: Custom weighted-select (X-Y) candidates (uses power param)
+            if pool_config.custom_weighted_size > 0:
                 pool_weights = []
-                for f in remaining_candidates:
+                for f in all_files:
                     elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
                     games_played = f[3] + f[4] + f[5]
                     games_weight = 1.0 / ((games_played + 1) ** power)
                     pool_weights.append(elo_weight * games_weight)
 
-                weighted_selected = []
-                remaining_files = list(remaining_candidates)
+                # Sample (X-Y) candidates without replacement
+                custom_weighted_selected = []
+                remaining_files = list(all_files)
                 remaining_weights = list(pool_weights)
 
-                for _ in range(pool_config.weighted_size):
+                for _ in range(pool_config.custom_weighted_size):
                     chosen = random.choices(remaining_files, weights=remaining_weights, k=1)[0]
                     idx = remaining_files.index(chosen)
-                    weighted_selected.append(chosen)
+                    custom_weighted_selected.append(chosen)
+                    selected_ids.add(chosen[0])
                     remaining_files.pop(idx)
                     remaining_weights.pop(idx)
 
-                selected_files.extend(weighted_selected)
+                selected_files.extend(custom_weighted_selected)
+                print(cyan(f"Selected {pool_config.custom_weighted_size} candidates via custom weighted sampling"))
+
+            # Phase 2: Top-skewing weighted-select Y candidates from remaining pool
+            if pool_config.top_skewing_size > 0:
+                # Get candidates not already selected
+                remaining_candidates = [f for f in all_files if f[0] not in selected_ids]
+
+                # Calculate weights using TOP_SKEWING_POWER (hardcoded constant)
+                top_skewing_weights = []
+                for f in remaining_candidates:
+                    elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+                    games_played = f[3] + f[4] + f[5]
+                    games_weight = 1.0 / ((games_played + 1) ** TOP_SKEWING_POWER)
+                    top_skewing_weights.append(elo_weight * games_weight)
+
+                # Sample Y candidates without replacement
+                top_skewing_selected = []
+                for _ in range(pool_config.top_skewing_size):
+                    chosen = random.choices(remaining_candidates, weights=top_skewing_weights, k=1)[0]
+                    idx = remaining_candidates.index(chosen)
+                    top_skewing_selected.append(chosen)
+                    remaining_candidates.pop(idx)
+                    top_skewing_weights.pop(idx)
+
+                selected_files.extend(top_skewing_selected)
+                print(cyan(f"Selected {pool_config.top_skewing_size} candidates via top-skewing weighted sampling"))
 
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
 
             # Summary message
             parts = []
-            if pool_config.hard_selected > 0:
-                parts.append(f"{pool_config.hard_selected} top")
-            if pool_config.weighted_size > 0:
-                parts.append(f"{pool_config.weighted_size} sampled")
-            if pool_config.bottom_selected > 0:
-                parts.append(f"{pool_config.bottom_selected} bottom")
+            if pool_config.custom_weighted_size > 0:
+                parts.append(f"{pool_config.custom_weighted_size} custom weighted")
+            if pool_config.top_skewing_size > 0:
+                parts.append(f"{pool_config.top_skewing_size} top-skewing")
 
             if parts:
                 breakdown = " + ".join(parts)
