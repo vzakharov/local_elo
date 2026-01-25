@@ -203,13 +203,21 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
                 # Get candidates not already selected
                 remaining_candidates = [f for f in all_files if f[0] not in selected_ids]
 
-                # Calculate weights using TOP_SKEWING_POWER (hardcoded constant)
+                # Sort by Elo (highest first) to get position-based ranking
+                sorted_candidates = sorted(remaining_candidates, key=lambda f: f[2], reverse=True)
+                total_remaining = len(sorted_candidates)
+
+                # Calculate weights based on position (top positions get higher weights)
+                # Position 0 (top) gets highest weight, position N-1 (bottom) gets lowest
                 top_skewing_weights = []
-                for f in remaining_candidates:
-                    elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
-                    games_played = f[3] + f[4] + f[5]
-                    games_weight = 1.0 / ((games_played + 1) ** TOP_SKEWING_POWER)
-                    top_skewing_weights.append(elo_weight * games_weight)
+                for idx, f in enumerate(sorted_candidates):
+                    # Higher position (lower index) = higher weight
+                    # Weight = (total_remaining - position) ** TOP_SKEWING_POWER
+                    position_weight = (total_remaining - idx) ** TOP_SKEWING_POWER
+                    top_skewing_weights.append(position_weight)
+
+                # Use sorted candidates for selection
+                remaining_candidates = sorted_candidates
 
                 # Sample Y candidates without replacement
                 top_skewing_selected = []
