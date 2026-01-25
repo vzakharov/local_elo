@@ -22,34 +22,37 @@ def parse_pool_size(value: str):
     try:
         if '/' in value:
             parts = value.split('/')
-            if len(parts) != 2:
+            if len(parts) > 3:
                 raise argparse.ArgumentTypeError(
-                    f"Invalid pool size format '{value}'. Expected 'N' or 'N/M'"
+                    f"Invalid pool size format '{value}'. Expected 'N', 'N/M', or 'N/M/P'"
                 )
 
             total = int(parts[0])
-            hard = int(parts[1])
+            hard = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+            bottom = int(parts[2]) if len(parts) > 2 and parts[2] else 0
 
             # Validate constraints
             if total < 2:
                 raise argparse.ArgumentTypeError("Total pool size must be at least 2")
             if hard < 0:
                 raise argparse.ArgumentTypeError("Hard-selected count cannot be negative")
-            if hard > total:
+            if bottom < 0:
+                raise argparse.ArgumentTypeError("Bottom-selected count cannot be negative")
+            if hard + bottom > total:
                 raise argparse.ArgumentTypeError(
-                    f"Hard-selected count ({hard}) cannot exceed total pool size ({total})"
+                    f"Top ({hard}) + bottom ({bottom}) cannot exceed total pool size ({total})"
                 )
 
-            return PoolConfig(total_size=total, hard_selected=hard)
+            return PoolConfig(total_size=total, hard_selected=hard, bottom_selected=bottom)
         else:
             total = int(value)
             if total < 2:
                 raise argparse.ArgumentTypeError("Pool size must be at least 2")
-            return PoolConfig(total_size=total, hard_selected=0)
+            return PoolConfig(total_size=total, hard_selected=0, bottom_selected=0)
 
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"Invalid pool size '{value}'. Must be integer or 'N/M' format"
+            f"Invalid pool size '{value}'. Must be integer, 'N/M', or 'N/M/P' format"
         )
 
 
@@ -67,8 +70,10 @@ def main():
                        help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
     parser.add_argument('-n', '--pool-size', dest='pool_size', type=parse_pool_size, default=None,
                        help='Limit pool size for competitor selection in knockout mode. '
-                            'Use N for total pool size, or N/M to hard-select top M players by Elo. '
-                            'Example: -n 64/32 selects 32 top players + 32 weighted-sampled. '
+                            'Use N for total pool size, N/M to hard-select top M players, '
+                            'or N/M/P to select M from top and P from bottom by Elo. '
+                            'Example: -n 64/16/8 selects 16 top + 40 weighted + 8 bottom. '
+                            'Use N//P to select P from bottom with no top selection. '
                             '(default: use all remaining files)')
     parser.add_argument('-l', '--link', dest='link_pattern', default=None,
                        help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')
