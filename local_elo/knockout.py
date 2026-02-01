@@ -132,7 +132,7 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
 
 
 def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pattern: str,
-                                    pool_config: Optional[PoolConfig], power: float) -> Tuple[set, set]:
+                                    pool_config: Optional[PoolConfig], power: Tuple[float, float]) -> Tuple[set, set]:
     """
     Initialize or resume a knockout tournament.
     Returns (eliminated, tournament_pool) sets.
@@ -175,11 +175,13 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
 
             # Phase 1: Custom weighted-select (X-Y) candidates (uses power param)
             if pool_config.custom_weighted_size > 0:
+                games_power, elo_power = power
                 pool_weights = []
                 for f in all_files:
-                    elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+                    base_elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+                    elo_weight = base_elo_weight ** elo_power
                     games_played = f[3] + f[4] + f[5]
-                    games_weight = 1.0 / ((games_played + 1) ** power)
+                    games_weight = 1.0 / ((games_played + 1) ** games_power)
                     pool_weights.append(elo_weight * games_weight)
 
                 # Sample (X-Y) candidates without replacement

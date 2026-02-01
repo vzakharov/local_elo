@@ -71,6 +71,38 @@ def parse_pool_size(value: str):
         )
 
 
+def parse_power(value: str):
+    """Parse power parameter in X/Y format.
+
+    X = games power, Y = elo power
+    Examples:
+        '10/5' -> (10.0, 5.0)
+        '10/' -> (10.0, DEFAULT_ELO_POWER)
+        '/5' -> (DEFAULT_GAMES_POWER, 5.0)
+        '10' -> (10.0, DEFAULT_ELO_POWER)
+    """
+    from .constants import DEFAULT_GAMES_POWER, DEFAULT_ELO_POWER
+
+    try:
+        if '/' in value:
+            parts = value.split('/')
+            if len(parts) != 2:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid power format '{value}'. Expected 'X/Y' format"
+                )
+            games_power = float(parts[0]) if parts[0] else DEFAULT_GAMES_POWER
+            elo_power = float(parts[1]) if parts[1] else DEFAULT_ELO_POWER
+        else:
+            games_power = float(value)
+            elo_power = DEFAULT_ELO_POWER
+
+        return (games_power, elo_power)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid power '{value}'. Must be float or 'X/Y' format"
+        )
+
+
 def main():
     """Main entry point for the Local Elo CLI tool."""
     # Parse command line arguments
@@ -81,8 +113,9 @@ def main():
                        help='File extensions to include (comma-separated, e.g., "py,js,ts")')
     parser.add_argument('-k', '--knockout', action='store_true',
                        help='Knockout mode: eliminate losers until only one remains')
-    parser.add_argument('-p', '--power', dest='power', type=float, default=1.0,
-                       help='Power law exponent for games-played balancing (default: 1.0; higher values more aggressively favor underplayed entries)')
+    parser.add_argument('-p', '--power', dest='power', type=parse_power, default=(2.0, 2.0),
+                       help='Power factors in X/Y format: X=games power, Y=elo power (default: 2.0/2.0). '
+                            'Examples: -p 10/5 (games=10, elo=5), -p 10/ (games=10, elo=default), -p /5 (games=default, elo=5)')
     parser.add_argument('-n', '--pool-size', dest='pool_size', type=parse_pool_size, default=None,
                        help='Tournament pool selection in X/Y format. '
                             'X = total pool size, Y = top-skewing weighted (remaining X-Y custom weighted). '
@@ -105,9 +138,10 @@ def main():
     else:
         pattern = '.*'  # Match all files by default
 
-    # Validate power parameter
-    if args.power <= 0:
-        print(red("Error: Power parameter must be positive (e.g., 0.5, 1.0, 2.0)"))
+    # Validate power parameters
+    games_power, elo_power = args.power
+    if games_power <= 0 or elo_power <= 0:
+        print(red(f"Error: Power parameters must be positive (got games={games_power}, elo={elo_power})"))
         sys.exit(1)
 
     # Initialize database

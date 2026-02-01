@@ -6,31 +6,24 @@ from .elo import calculate_win_probability
 
 
 def select_first_player(files: List[Tuple[int, str, float, int, int, int]],
-                        power: float = 1.0) -> Tuple[int, str, float, int, int, int]:
+                        power: Tuple[float, float]) -> Tuple[int, str, float, int, int, int]:
     """
     Select the first player using weighted random selection.
     Combines two weights:
-    1. Elo-based weight: probability of beating an average opponent (DEFAULT_ELO)
-    2. Games-played weight: 1 / (games_played + 1)^power to balance selection frequency
+    1. Elo-based weight: (probability of beating an average opponent)^elo_power
+    2. Games-played weight: 1 / (games_played + 1)^games_power
 
-    The power parameter controls aggressiveness of games-played balancing:
-    - power=0.5: Gentler balancing (square root decay)
-    - power=1.0: Standard linear balancing (default)
-    - power=2.0: Aggressive quadratic decay
-    - power>2.0: Very aggressive (strongly favor least-played entries)
-
-    Combined weight = elo_weight * games_weight
+    power: Tuple of (games_power, elo_power)
     """
+    games_power, elo_power = power
     weights = []
     for f in files:
-        # Calculate Elo-based weight
-        elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+        base_elo_weight = calculate_win_probability(f[2], DEFAULT_ELO)
+        elo_weight = base_elo_weight ** elo_power
 
-        # Calculate games-played weight to balance play frequency
-        games_played = f[3] + f[4] + f[5]  # wins + losses + ties
-        games_weight = 1.0 / ((games_played + 1) ** power)
+        games_played = f[3] + f[4] + f[5]
+        games_weight = 1.0 / ((games_played + 1) ** games_power)
 
-        # Combine weights multiplicatively
         combined_weight = elo_weight * games_weight
         weights.append(combined_weight)
 
