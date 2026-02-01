@@ -8,9 +8,10 @@ import sqlite3
 from typing import List, Tuple, Optional
 
 from .constants import DB_NAME
-from .db import add_file_to_db, remove_entry_from_database
+from .db import add_file_to_db, remove_entry_from_database, remove_elimination
 from .elo import redistribute_elo_delta
 from .colors import green, red, yellow, cyan, bold, dim
+from .utils import get_filename, display_name
 
 
 def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
@@ -149,6 +150,86 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
         print(f"{green('✓')} Removed {cyan(file_path)} and redistributed {bold(f'{delta:+.1f}')} Elo")
 
     return True
+
+
+def handle_add_command(conn: sqlite3.Connection, arg: str, target_dir: str,
+                       pattern: str, eliminated: set, tournament_pool: set) -> bool:
+    """
+    Add/restore a player to the knockout tournament by partial filename match.
+    Returns True to signal need for new matchup, False otherwise.
+    """
+    arg = arg.strip()
+    if not arg:
+        print(red("  Usage: add <partial_filename>"))
+        return False
+
+    # Query all files from DB (including eliminated ones)
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, path, elo, wins, losses, ties FROM files')
+    all_db_files = cursor.fetchall()
+
+    # Filter to files that exist and match pattern
+    regex = re.compile(pattern)
+    existing_files = [
+        f for f in all_db_files
+        if os.path.exists(os.path.join(target_dir, f[1])) and regex.search(f[1])
+    ]
+
+    # Find matches by partial filename (case-insensitive)
+    arg_lower = arg.lower()
+    matches = []
+    for file_tuple in existing_files:
+        file_id, file_path = file_tuple[0], file_tuple[1]
+        filename = get_filename(file_path)
+        if arg_lower in filename.lower():
+            matches.append(file_tuple)
+
+    if not matches:
+        print(red(f"  No files found matching '{arg}'"))
+        return False
+
+    if len(matches) > 1:
+        print(yellow(f"  Multiple matches for '{arg}':"))
+        for file_tuple in matches[:10]:
+            file_id, file_path = file_tuple[0], file_tuple[1]
+            status = ""
+            if file_id in eliminated:
+                status = red(" [eliminated]")
+            elif tournament_pool and file_id not in tournament_pool:
+                status = dim(" [not in pool]")
+            print(f"    - {display_name(file_path)}{status}")
+        if len(matches) > 10:
+            print(dim(f"    ... and {len(matches) - 10} more"))
+        print(yellow("  Please be more specific."))
+        return False
+
+    # Single match found
+    file_id, file_path = matches[0][0], matches[0][1]
+    disp = display_name(file_path)
+
+    # Case 1: Player is eliminated - restore them
+    if file_id in eliminated:
+        eliminated.discard(file_id)
+        remove_elimination(conn, file_id)
+        print(f"{green('+')} Restored {cyan(disp)} to the tournament")
+        return True
+
+    # Case 2: Tournament pool exists
+    if tournament_pool:
+        if file_id in tournament_pool:
+            print(yellow(f"  {disp} is already active in the tournament"))
+            return False
+        else:
+            # Not in pool - add to pool
+            tournament_pool.add(file_id)
+            cursor.execute('INSERT OR IGNORE INTO knockout_pool (file_id) VALUES (?)', (file_id,))
+            conn.commit()
+            print(f"{green('+')} Added {cyan(disp)} to the tournament pool")
+            return True
+
+    # No pool restriction - player is already active
+    print(yellow(f"  {disp} is already active (not eliminated)"))
+    return False
 
 
 def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:

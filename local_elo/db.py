@@ -96,6 +96,15 @@ def save_elimination(conn: sqlite3.Connection, file_id: int) -> None:
         pass
 
 
+def remove_elimination(conn: sqlite3.Connection, file_id: int) -> bool:
+    """Remove a file's elimination record from the database.
+    Returns True if a record was removed, False if the file wasn't eliminated."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_state WHERE file_id = ?', (file_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def clear_knockout_state(conn: sqlite3.Connection) -> None:
     """Clear all knockout state from database."""
     cursor = conn.cursor()

@@ -232,7 +232,7 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(f"Commands: {bold('A/B')} (winner), {bold('a-/b-')} (win but remove winner), "
               f"{bold('a+/b+')} (win but loser stays), {bold('t')} (tie), "
               f"{bold('ta-/tb-/t-')} (tie but eliminate), {bold('o')} (open), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} a/b/ab")
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} a/b/ab, {bold('add')} <name>")
         print(yellow("Note: Losers are eliminated! Last one standing wins."))
         print(dim("Press Ctrl+C to exit\n"))
     else:

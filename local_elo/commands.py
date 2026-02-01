@@ -5,7 +5,7 @@ import argparse
 
 from .db import init_db, get_active_files, get_rankings
 from .elo import calculate_win_probability
-from .files import handle_open_command, handle_rename_command, handle_rem_command, sync_files
+from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_matchup
 from .game import select_first_player, select_second_player
 from .knockout import (
@@ -229,7 +229,7 @@ def main():
             # Get user input
             while True:
                 if args.knockout:
-                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/rem a/b/ab/reset): ").strip()
+                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/rem a/b/ab/add <name>/reset): ").strip()
                 else:
                     user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>/rem a/b/ab): ").strip()
 
@@ -276,6 +276,16 @@ def main():
                         break
                     continue
 
+                # Check for add command (knockout mode only)
+                if user_input.lower().startswith('add '):
+                    if not args.knockout:
+                        print(red("Error: 'add' command is only available in knockout mode"))
+                        continue
+                    arg = user_input[4:].strip()
+                    if handle_add_command(conn, arg, args.target_dir, pattern, eliminated, tournament_pool):
+                        break
+                    continue
+
                 # Check for knockout-only commands
                 if user_input.upper() in ['A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-'] and not args.knockout:
                     print(red("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode"))
@@ -293,7 +303,7 @@ def main():
                     break
                 else:
                     if args.knockout:
-                        print(yellow("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, or reset"))
+                        print(yellow("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, add <name>, or reset"))
                     else:
                         print(yellow("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem a/b/ab"))
 
