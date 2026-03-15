@@ -49,7 +49,7 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
         game_result = 'tie'
     else:
         game_result = result
-    record_game(conn, id_a, id_b, elo_a, elo_b, game_result)
+    record_game(conn, id_a, id_b, elo_a, elo_b, game_result, target_dir)
 
     display_ranking_changes(conn, old_rankings, id_a, id_b, target_dir)
 

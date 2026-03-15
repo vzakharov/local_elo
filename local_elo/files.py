@@ -140,7 +140,7 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
         delta = file_elo - 1000
 
         full_path = os.path.join(target_dir, file_path) if target_dir != '.' else file_path
-        redistribute_elo_delta(conn, delta, file_id)
+        redistribute_elo_delta(conn, delta, file_id, target_dir)
         trash_file(full_path, target_dir)
         remove_entry_from_database(conn, file_id)
 
