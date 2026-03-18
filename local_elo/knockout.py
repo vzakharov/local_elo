@@ -4,6 +4,7 @@ import random
 from typing import Optional, Tuple, NamedTuple
 
 from .constants import DEFAULT_ELO
+from .elo import _update_finder_comments_for_ids
 
 TOP_SKEWING_POWER = 2.0
 
@@ -235,6 +236,7 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
 
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
+            _update_finder_comments_for_ids(conn, target_dir, list(tournament_pool))
 
             # Summary message
             parts = []
