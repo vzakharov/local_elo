@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import sqlite3
+import threading
 from typing import Tuple
 
 from .constants import K_FACTOR, DEFAULT_ELO
@@ -43,9 +44,11 @@ def _format_finder_comment(elo: float, wins: int, losses: int, ties: int) -> str
 
 def _update_finder_comments_for_ids(conn: sqlite3.Connection, target_dir: str,
                                      file_ids: list) -> None:
-    """Update macOS Finder comments for the given file IDs."""
+    """Update macOS Finder comments for the given file IDs (fire-and-forget)."""
     if sys.platform != 'darwin':
         return
+    # Gather data on the calling thread (SQLite connections aren't thread-safe)
+    updates = []
     cursor = conn.cursor()
     for file_id in file_ids:
         cursor.execute('SELECT path, elo, wins, losses, ties FROM files WHERE id = ?',
@@ -56,7 +59,12 @@ def _update_finder_comments_for_ids(conn: sqlite3.Connection, target_dir: str,
         path, elo, wins, losses, ties = row
         full_path = os.path.join(target_dir, path)
         if os.path.exists(full_path):
-            _set_finder_comment(full_path, _format_finder_comment(elo, wins, losses, ties))
+            updates.append((full_path, _format_finder_comment(elo, wins, losses, ties)))
+    if updates:
+        def _apply():
+            for path, comment in updates:
+                _set_finder_comment(path, comment)
+        threading.Thread(target=_apply, daemon=True).start()
 
 
 def update_elo_ratings(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
