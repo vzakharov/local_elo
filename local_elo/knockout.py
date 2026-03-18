@@ -236,7 +236,6 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
 
             tournament_pool = {f[0] for f in selected_files}
             save_knockout_pool(conn, tournament_pool)
-            _update_finder_comments_for_ids(conn, target_dir, list(tournament_pool))
 
             # Summary message
             parts = []
@@ -253,6 +252,10 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
             print()
         else:
             tournament_pool = set()
+
+    # Update Finder comments for all active files at tournament start/resume
+    all_active_ids = [f[0] for f in get_active_files(conn, target_dir, pattern)]
+    _update_finder_comments_for_ids(conn, target_dir, all_active_ids)
 
     return eliminated, tournament_pool
 
