@@ -26,7 +26,8 @@ class PoolConfig(NamedTuple):
 from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,
-    load_knockout_pool, clear_knockout_pool, get_active_files, get_rankings
+    load_knockout_pool, clear_knockout_pool, clear_knockout_matches,
+    save_knockout_match, get_active_files, get_rankings
 )
 from .elo import calculate_win_probability, record_game
 from .ui import display_leaderboard, display_ranking_changes
@@ -55,6 +56,8 @@ def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: i
     display_ranking_changes(conn, old_rankings, id_a, id_b, target_dir)
 
     if knockout_mode:
+        save_knockout_match(conn, id_a, id_b)
+
         remove_winner = result in ['A-', 'B-']
         keep_loser = result in ['A+', 'B+']
 
@@ -123,6 +126,7 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
     if confirm == 'y' or confirm == 'yes':
         clear_knockout_state(conn)
         clear_knockout_pool(conn)
+        clear_knockout_matches(conn)
         eliminated.clear()
         tournament_pool.clear()
         print(green("Knockout tournament has been reset! All players are back in.\n"))
@@ -295,6 +299,7 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
 
             clear_knockout_state(conn)
             clear_knockout_pool(conn)
+            clear_knockout_matches(conn)
             eliminated.clear()
             tournament_pool.clear()
             print(green("Knockout tournament reset! All players are back in.\n"))

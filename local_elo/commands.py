@@ -3,11 +3,11 @@ import sys
 import os
 import argparse
 
-from .db import init_db, get_active_files, get_rankings
+from .db import init_db, get_active_files, get_rankings, load_knockout_matches, clear_knockout_matches
 from .elo import calculate_win_probability
 from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_matchup
-from .game import select_first_player, select_second_player
+from .game import select_first_player, select_second_player, select_knockout_matchup
 from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
 )
@@ -190,8 +190,17 @@ def main():
                     break
 
             # Select two players
-            first_player = select_first_player(files, args.power)
-            second_player = select_second_player(files, first_player)
+            if args.knockout:
+                knockout_matches = load_knockout_matches(conn)
+                first_player, second_player, all_played = select_knockout_matchup(
+                    files, args.power, knockout_matches
+                )
+                if all_played:
+                    clear_knockout_matches(conn)
+                    print(dim("All remaining players have faced each other — starting a new round.\n"))
+            else:
+                first_player = select_first_player(files, args.power)
+                second_player = select_second_player(files, first_player)
 
             if second_player is None:
                 print(red("Could not find a second player."))

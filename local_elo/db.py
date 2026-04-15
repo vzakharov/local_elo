@@ -56,6 +56,17 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create knockout_matches table (tracks pairs that have already competed)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knockout_matches (
+            file_a_id INTEGER,
+            file_b_id INTEGER,
+            PRIMARY KEY (file_a_id, file_b_id),
+            FOREIGN KEY (file_a_id) REFERENCES files(id),
+            FOREIGN KEY (file_b_id) REFERENCES files(id)
+        )
+    ''')
+
     conn.commit()
     return conn
 
@@ -132,6 +143,34 @@ def clear_knockout_pool(conn: sqlite3.Connection) -> None:
     """Clear the tournament pool table."""
     cursor = conn.cursor()
     cursor.execute('DELETE FROM knockout_pool')
+    conn.commit()
+
+
+def save_knockout_match(conn: sqlite3.Connection, id_a: int, id_b: int) -> None:
+    """Record that two players have competed in this knockout tournament."""
+    a, b = min(id_a, id_b), max(id_a, id_b)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'INSERT INTO knockout_matches (file_a_id, file_b_id) VALUES (?, ?)',
+            (a, b)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+
+
+def load_knockout_matches(conn: sqlite3.Connection) -> set:
+    """Load all knockout match pairs. Returns set of frozensets of (id_a, id_b)."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_a_id, file_b_id FROM knockout_matches')
+    return {frozenset((row[0], row[1])) for row in cursor.fetchall()}
+
+
+def clear_knockout_matches(conn: sqlite3.Connection) -> None:
+    """Clear all knockout match records."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_matches')
     conn.commit()
 
 
