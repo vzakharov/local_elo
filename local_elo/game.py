@@ -57,43 +57,31 @@ def select_second_player(files: List[Tuple[int, str, float, int, int, int]],
     return random.choices(candidates, weights=weights, k=1)[0]
 
 
-def select_knockout_matchup(files, power, knockout_matches):
-    """Select a matchup for knockout mode, avoiding repeat pairings when possible.
+def select_match_players(files: List[Tuple[int, str, float, int, int, int]],
+                         match_size: int,
+                         power: Tuple[float, float]) -> List[Tuple[int, str, float, int, int, int]]:
+    """Select N players for a single competition without replacement."""
+    if match_size < 2:
+        raise ValueError("match_size must be at least 2")
+    if len(files) < 2:
+        return []
 
-    If any unplayed pairs exist among remaining players, the matchup is drawn
-    exclusively from those pairs. Once every remaining player has faced every
-    other remaining player, normal selection resumes.
-    """
-    remaining_ids = {f[0] for f in files}
+    selected = [select_first_player(files, power)]
+    candidates = [f for f in files if f[0] != selected[0][0]]
+    target_size = min(match_size, len(files))
 
-    # Build lookup: player_id -> set of opponent_ids they've already played
-    played_map = {}
-    for match in knockout_matches:
-        a, b = tuple(match)
-        if a in remaining_ids and b in remaining_ids:
-            played_map.setdefault(a, set()).add(b)
-            played_map.setdefault(b, set()).add(a)
+    while len(selected) < target_size and candidates:
+        weights = []
+        for candidate in candidates:
+            closeness_scores = []
+            for chosen in selected:
+                p = calculate_win_probability(candidate[2], chosen[2])
+                closeness_scores.append(min(p, 1.0 - p))
+            avg_closeness = sum(closeness_scores) / len(closeness_scores)
+            weights.append(avg_closeness)
 
-    # For each player, determine their fresh (unplayed) opponents
-    fresh_opponents = {}
-    for f in files:
-        played = played_map.get(f[0], set())
-        fresh_opponents[f[0]] = remaining_ids - {f[0]} - played
+        next_player = random.choices(candidates, weights=weights, k=1)[0]
+        selected.append(next_player)
+        candidates = [f for f in candidates if f[0] != next_player[0]]
 
-    has_fresh_pairs = any(fresh_opponents.values())
-
-    if has_fresh_pairs:
-        # Only consider players who have at least one unplayed opponent
-        eligible = [f for f in files if fresh_opponents[f[0]]]
-        first_player = select_first_player(eligible, power)
-
-        # Select second player only from unplayed opponents
-        fresh_files = [f for f in files if f[0] in fresh_opponents[first_player[0]]]
-        second_player = select_second_player(fresh_files + [first_player], first_player)
-    else:
-        # All pairs have been played, use normal selection
-        first_player = select_first_player(files, power)
-        second_player = select_second_player(files, first_player)
-        return first_player, second_player, True
-
-    return first_player, second_player, False
+    return selected

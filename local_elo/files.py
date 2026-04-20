@@ -111,23 +111,27 @@ def apply_wildcard_rename(old_pattern: str, new_pattern: str, target_dir: str) -
     return matches
 
 
-def handle_rem_command(conn: sqlite3.Connection, arg: str, id_a: int, id_b: int,
-                       path_a: str, path_b: str, target_dir: str,
-                       files: List[Tuple], eliminated: set, tournament_pool: set) -> bool:
+def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tuple[int, str]],
+                       target_dir: str, files: List[Tuple], eliminated: set,
+                       tournament_pool: set) -> bool:
     """
-    Remove competitor(s) by reference: 'a', 'b', or 'ab'.
+    Remove competitor(s) by slot letter sequence, e.g. 'a', 'bd'.
     Returns True to signal need for new matchup.
     """
     arg = arg.lower()
-    if arg not in ('a', 'b', 'ab', 'ba'):
-        print(red(f"  Invalid argument: '{arg}'. Use 'a', 'b', or 'ab'."))
+    valid_slots = {chr(ord('a') + idx): (file_id, path) for idx, (file_id, path) in enumerate(competitors)}
+    if not arg or any(ch not in valid_slots for ch in arg):
+        printable = "".join(valid_slots.keys())
+        print(red(f"  Invalid argument: '{arg}'. Use one or more of: {printable}"))
         return False
 
     to_remove = []
-    if 'a' in arg:
-        to_remove.append((id_a, path_a))
-    if 'b' in arg:
-        to_remove.append((id_b, path_b))
+    seen = set()
+    for ch in arg:
+        if ch in seen:
+            continue
+        seen.add(ch)
+        to_remove.append(valid_slots[ch])
 
     for file_id, file_path in to_remove:
         cursor = conn.cursor()
@@ -232,13 +236,13 @@ def handle_add_command(conn: sqlite3.Connection, arg: str, target_dir: str,
     return False
 
 
-def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
-    """Handle the 'o' command to open both files."""
-    full_path_a = os.path.join(target_dir, path_a)
-    full_path_b = os.path.join(target_dir, path_b)
+def handle_open_command(paths: List[str], target_dir: str) -> None:
+    """Handle the 'o' command to open all displayed files."""
+    if not paths:
+        print(yellow("No files to open"))
+        return
 
-    abs_path_a = os.path.abspath(full_path_a)
-    abs_path_b = os.path.abspath(full_path_b)
+    abs_paths = [os.path.abspath(os.path.join(target_dir, path)) for path in paths]
 
     custom_script = None
     if sys.platform in ['darwin', 'linux'] or sys.platform.startswith('linux'):
@@ -252,12 +256,12 @@ def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
 
     if custom_script:
         if sys.platform in ['darwin', 'linux'] or sys.platform.startswith('linux'):
-            subprocess.run(['bash', custom_script, abs_path_a])
-            subprocess.run(['bash', custom_script, abs_path_b])
+            for abs_path in abs_paths:
+                subprocess.run(['bash', custom_script, abs_path])
         else:
-            subprocess.run([custom_script, abs_path_a])
-            subprocess.run([custom_script, abs_path_b])
-        print(f"Opened {cyan(path_a)} and {cyan(path_b)} using {os.path.basename(custom_script)}")
+            for abs_path in abs_paths:
+                subprocess.run([custom_script, abs_path])
+        print(f"Opened {len(paths)} file(s) using {os.path.basename(custom_script)}")
     else:
         if sys.platform == 'darwin':
             open_cmd = 'open'
@@ -269,21 +273,21 @@ def handle_open_command(path_a: str, path_b: str, target_dir: str) -> None:
             print(yellow("Unsupported platform for opening files"))
             return
 
-        subprocess.run([open_cmd, abs_path_a])
-        subprocess.run([open_cmd, abs_path_b])
-        print(f"Opened {cyan(path_a)} and {cyan(path_b)}")
+        for abs_path in abs_paths:
+            subprocess.run([open_cmd, abs_path])
+        print(f"Opened {len(paths)} file(s)")
 
 
 def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir: str,
-                          pattern: str, path_a: str, path_b: str) -> Tuple[str, str]:
+                          pattern: str, current_paths: List[str]) -> List[str]:
     """
     Handle the 'ren' command to rename files.
-    Returns updated (path_a, path_b) in case one was renamed.
+    Returns updated current_paths in case visible files were renamed.
     """
     parts = user_input.split(maxsplit=2)
     if len(parts) != 3:
         print(yellow("Usage: ren <old_filename> <new_filename>"))
-        return path_a, path_b
+        return current_paths
 
     old_name = parts[1]
     new_name = parts[2]
@@ -301,7 +305,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
                     break
             
             if conflict_found:
-                return path_a, path_b
+                return current_paths
             
             cursor = conn.cursor()
             renamed_count = 0
@@ -314,10 +318,10 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
                     cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_filename, old_filename))
                     renamed_count += 1
                     
-                    if path_a == old_filename:
-                        path_a = new_filename
-                    if path_b == old_filename:
-                        path_b = new_filename
+                    current_paths = [
+                        new_filename if existing == old_filename else existing
+                        for existing in current_paths
+                    ]
                 except OSError as e:
                     print(red(f"Error renaming '{old_filename}' to '{new_filename}': {e}"))
 
@@ -328,24 +332,24 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
             print(red(f"Error: {e}"))
         
         sync_files(conn, pattern, target_dir)
-        return path_a, path_b
+        return current_paths
     else:
         old_path = os.path.join(target_dir, old_name)
         new_path = os.path.join(target_dir, new_name)
 
         if not os.path.exists(old_path):
             print(red(f"Error: File '{old_name}' not found"))
-            return path_a, path_b
+            return current_paths
 
         if os.path.exists(new_path):
             print(red(f"Error: File '{new_name}' already exists"))
-            return path_a, path_b
+            return current_paths
 
         try:
             os.rename(old_path, new_path)
         except OSError as e:
             print(red(f"Error renaming file: {e}"))
-            return path_a, path_b
+            return current_paths
 
         cursor = conn.cursor()
         cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_name, old_name))
@@ -353,10 +357,10 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
 
         print(green(f"Renamed '{old_name}' to '{new_name}'"))
 
-        if path_a == old_name:
-            path_a = new_name
-        if path_b == old_name:
-            path_b = new_name
+        current_paths = [
+            new_name if existing == old_name else existing
+            for existing in current_paths
+        ]
 
         sync_files(conn, pattern, target_dir)
-        return path_a, path_b
+        return current_paths

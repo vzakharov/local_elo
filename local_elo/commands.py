@@ -3,16 +3,16 @@ import sys
 import os
 import argparse
 
-from .db import init_db, get_active_files, get_rankings, load_knockout_matches, clear_knockout_matches
-from .elo import calculate_win_probability
+from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info
 from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, sync_files
-from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_matchup
-from .game import select_first_player, select_second_player, select_knockout_matchup
+from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_competition
+from .game import select_match_players
 from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
 )
 from .colors import red, yellow, dim
 from .utils import display_name, extensions_to_pattern
+from .outcome import parse_outcome_command, slot_letters
 
 
 def parse_pool_size(value: str):
@@ -125,6 +125,8 @@ def main():
                             '(default: use all remaining files)')
     parser.add_argument('-l', '--link', dest='link_pattern', default=None,
                        help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')
+    parser.add_argument('-m', '--match-size', dest='match_size', type=int, default=2,
+                       help='Number of players shown in each competition round (default: 2, max: 26)')
     args = parser.parse_args()
 
     # Set global link pattern
@@ -142,6 +144,12 @@ def main():
     games_power, elo_power = args.power
     if games_power <= 0 or elo_power <= 0:
         print(red(f"Error: Power parameters must be positive (got games={games_power}, elo={elo_power})"))
+        sys.exit(1)
+    if args.match_size < 2:
+        print(red("Error: match size must be at least 2"))
+        sys.exit(1)
+    if args.match_size > 26:
+        print(red("Error: match size cannot exceed 26"))
         sys.exit(1)
 
     # Initialize database
@@ -189,58 +197,64 @@ def main():
                     print(yellow("Only one file found. Need at least two files for comparison."))
                     break
 
-            # Select two players
+            # Select players for this competition
             if args.knockout:
-                knockout_matches = load_knockout_matches(conn)
-                first_player, second_player, all_played = select_knockout_matchup(
-                    files, args.power, knockout_matches
-                )
-                if all_played:
-                    clear_knockout_matches(conn)
-                    print(dim("All remaining players have faced each other — starting a new round.\n"))
+                round_played = load_round_played(conn)
+                eligible = [f for f in files if f[0] not in round_played]
+
+                min_required = min(args.match_size, len(files))
+                if len(eligible) < min_required:
+                    clear_round_played(conn)
+                    round_played = set()
+                    eligible = files
+                    round_num, _ = get_round_info(conn)
+                    round_num += 1
+                    set_round_info(conn, round_num, len(eligible))
+                    print(dim(f"All remaining players have played — starting round {round_num}.\n"))
+
+                round_num, round_total = get_round_info(conn)
+                if round_total is None:
+                    set_round_info(conn, round_num, len(eligible))
+                    round_total = len(eligible)
+                promoted = len(round_played)
+                print(dim(f"Round {round_num} — {len(eligible)}/{round_total} players left, {promoted} promoted"))
+
+                competition_players = select_match_players(eligible, args.match_size, args.power)
             else:
-                first_player = select_first_player(files, args.power)
-                second_player = select_second_player(files, first_player)
+                competition_players = select_match_players(files, args.match_size, args.power)
 
-            if second_player is None:
-                print(red("Could not find a second player."))
+            if len(competition_players) < 2:
+                print(red("Could not find enough players for this competition."))
                 break
-
-            # Display matchup
-            id_a, path_a, elo_a, _, _, _ = first_player
-            id_b, path_b, elo_b, _, _, _ = second_player
 
             # Get current rankings
             current_rankings = get_rankings(conn)
-            rank_a = current_rankings.get(id_a, "?")
-            rank_b = current_rankings.get(id_b, "?")
+            slots = slot_letters(len(competition_players))
+            matchup_rows = []
+            for idx, player in enumerate(competition_players):
+                player_id, path, elo, _, _, _ = player
+                matchup_rows.append((
+                    slots[idx],
+                    display_name(path),
+                    elo,
+                    current_rankings.get(player_id, "?"),
+                    format_record(player),
+                ))
 
-            # Calculate win probabilities
-            prob_a = calculate_win_probability(elo_a, elo_b)
-            prob_b = 1.0 - prob_a
-
-            # Display probabilities as percentages, always >= 50%
-            if prob_a >= 0.5:
-                win_prob_display = f"{prob_a * 100:.0f}% A"
-            else:
-                win_prob_display = f"{prob_b * 100:.0f}% B"
-
-            display_path_a = display_name(path_a)
-            display_path_b = display_name(path_b)
-
-            matchup_display = format_matchup(
-                display_path_a, elo_a, rank_a, format_record(first_player),
-                display_path_b, elo_b, rank_b, format_record(second_player),
-                win_prob_display, prob_a
-            )
+            matchup_display = format_competition(matchup_rows)
             print(matchup_display)
 
             # Get user input
             while True:
+                slot_hint = "".join(slots)
                 if args.knockout:
-                    user_input = input("Your choice (A/B/t/a-/b-/a+/b+/ta-/tb-/t-/o/top [N]/ren <old> <new>/rem a/b/ab/add <name>/reset): ").strip()
+                    user_input = input(
+                        f"Your choice ({slot_hint}[+/-]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/reset): "
+                    ).strip()
                 else:
-                    user_input = input("Your choice (A/B/t/o/top [N]/ren <old> <new>/rem a/b/ab): ").strip()
+                    user_input = input(
+                        f"Your choice ({slot_hint}/t/o/top [N]/ren <old> <new>/rem <slots>): "
+                    ).strip()
 
                 # Check for top command
                 top_n = parse_top_command(user_input)
@@ -252,20 +266,33 @@ def main():
 
                 # Check for open command
                 if user_input.lower() == 'o':
-                    handle_open_command(path_a, path_b, args.target_dir)
+                    handle_open_command([p[1] for p in competition_players], args.target_dir)
                     continue
 
                 # Check for rename command
                 if user_input.lower().startswith('ren '):
-                    path_a, path_b = handle_rename_command(conn, user_input, args.target_dir,
-                                                           pattern, path_a, path_b)
-                    display_path_a = display_name(path_a)
-                    display_path_b = display_name(path_b)
-                    matchup_display = format_matchup(
-                        display_path_a, elo_a, rank_a, format_record(first_player),
-                        display_path_b, elo_b, rank_b, format_record(second_player),
-                        win_prob_display, prob_a
+                    updated_paths = handle_rename_command(
+                        conn,
+                        user_input,
+                        args.target_dir,
+                        pattern,
+                        [p[1] for p in competition_players],
                     )
+                    competition_players = [
+                        (player[0], updated_paths[idx], player[2], player[3], player[4], player[5])
+                        for idx, player in enumerate(competition_players)
+                    ]
+                    matchup_rows = []
+                    for idx, player in enumerate(competition_players):
+                        player_id, path, elo, _, _, _ = player
+                        matchup_rows.append((
+                            slots[idx],
+                            display_name(path),
+                            elo,
+                            current_rankings.get(player_id, "?"),
+                            format_record(player),
+                        ))
+                    matchup_display = format_competition(matchup_rows)
                     print(matchup_display)
                     continue
 
@@ -281,7 +308,8 @@ def main():
                 # Check for rem command
                 if user_input.lower().startswith('rem '):
                     arg = user_input[4:].strip()
-                    if handle_rem_command(conn, arg, id_a, id_b, path_a, path_b, args.target_dir, files, eliminated, tournament_pool):
+                    visible_competitors = [(player[0], player[1]) for player in competition_players]
+                    if handle_rem_command(conn, arg, visible_competitors, args.target_dir, files, eliminated, tournament_pool):
                         break
                     continue
 
@@ -295,26 +323,32 @@ def main():
                         break
                     continue
 
-                # Check for knockout-only commands
-                if user_input.upper() in ['A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-'] and not args.knockout:
-                    print(red("Error: a-/b-/a+/b+/ta-/tb-/t- commands only available in knockout mode"))
+                # Check for knockout-only pass modifiers
+                lowered = user_input.strip().lower()
+                if not args.knockout and (lowered.endswith('+') or lowered.endswith('-')):
+                    print(red("Error: +/- commands are only available in knockout mode"))
                     continue
 
-                # Validate input
-                if user_input.upper() in ['A', 'B', 'T', 'A-', 'B-', 'A+', 'B+', 'TA-', 'TB-', 'T-']:
-                    result = user_input.upper()
-                    if result == 'T':
-                        result = 'tie'
-
-                    handle_game_result(conn, result, id_a, id_b, elo_a, elo_b,
-                                     path_a, path_b, args.target_dir, args.knockout,
-                                     eliminated, pattern, tournament_pool)
-                    break
-                else:
+                try:
+                    outcome = parse_outcome_command(user_input, len(competition_players))
+                except ValueError as exc:
                     if args.knockout:
-                        print(yellow("Invalid input. Please enter A, B, t, a-, b-, a+, b+, ta-, tb-, t-, o, top [N], ren <old> <new>, rem a/b/ab, add <name>, or reset"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, add, or reset"))
                     else:
-                        print(yellow("Invalid input. Please enter A, B, t, o, top [N], ren <old> <new>, or rem a/b/ab"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, or rem"))
+                    continue
+
+                handle_game_result(
+                    conn,
+                    outcome,
+                    competition_players,
+                    args.target_dir,
+                    args.knockout,
+                    eliminated,
+                    pattern,
+                    tournament_pool,
+                )
+                break
 
     except KeyboardInterrupt:
         print(dim("\n\nGoodbye!"))

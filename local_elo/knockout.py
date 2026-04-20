@@ -1,7 +1,7 @@
 import sqlite3
 import sys
 import random
-from typing import Optional, Tuple, NamedTuple
+from typing import List, Optional, Tuple, NamedTuple
 
 from .constants import DEFAULT_ELO
 from .elo import _update_finder_comments_for_ids
@@ -26,95 +26,75 @@ class PoolConfig(NamedTuple):
 from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,
-    load_knockout_pool, clear_knockout_pool, clear_knockout_matches,
-    save_knockout_match, get_active_files, get_rankings
+    load_knockout_pool, clear_knockout_pool, clear_round_played,
+    save_round_played, reset_round_number, get_active_files, get_rankings
 )
-from .elo import calculate_win_probability, record_game
+from .elo import calculate_win_probability, record_competition
+from .outcome import MatchOutcome
 from .ui import display_leaderboard, display_ranking_changes
 from .colors import bold, bold_red, bold_green, bold_cyan, green, red, yellow, cyan, dim
 from .utils import display_name
 
 
-def handle_game_result(conn: sqlite3.Connection, result: str, id_a: int, id_b: int,
-                       elo_a: float, elo_b: float, path_a: str, path_b: str,
+def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
+                       competitors: List[Tuple[int, str, float, int, int, int]],
                        target_dir: str, knockout_mode: bool, eliminated: set,
                        pattern: str, tournament_pool: set) -> None:
     """
-    Handle game result input (A, B, t, a-, b-, a+, b+, ta-, tb-, t-).
+    Handle multiplayer game outcome.
     Records the game, updates rankings, and handles knockout eliminations.
     """
     old_rankings = get_rankings(conn)
 
-    if result in ['A-', 'B-', 'A+', 'B+']:
-        game_result = result.rstrip('-+')
-    elif result in ['TA-', 'TB-', 'T-']:
-        game_result = 'tie'
+    participants = [(player[0], player[2]) for player in competitors]
+    record_competition(conn, participants, outcome, target_dir)
+    ordered_ids = [player[0] for player in competitors]
+    display_ranking_changes(conn, old_rankings, ordered_ids, target_dir)
+
+    if not knockout_mode:
+        return
+
+    file_ids = [player[0] for player in competitors]
+    path_by_slot = {idx: display_name(player[1]) for idx, player in enumerate(competitors)}
+    pass_ids = {file_ids[idx] for idx in outcome.pass_slots}
+    eliminated_now = [file_id for file_id in file_ids if file_id not in pass_ids]
+
+    for file_id in eliminated_now:
+        eliminated.add(file_id)
+        save_elimination(conn, file_id)
+
+    for idx, file_id in enumerate(file_ids):
+        if file_id in pass_ids and file_id not in eliminated:
+            save_round_played(conn, file_id)
+
+    winners_display = [path_by_slot[idx] for idx in sorted(outcome.winner_slots)]
+    pass_display = [path_by_slot[idx] for idx in sorted(outcome.pass_slots)]
+    eliminated_display = [
+        path_by_slot[idx] for idx, file_id in enumerate(file_ids) if file_id in eliminated_now
+    ]
+
+    if outcome.tie_all:
+        print(f"  {bold('Tie')}: all players are tied.")
     else:
-        game_result = result
-    record_game(conn, id_a, id_b, elo_a, elo_b, game_result, target_dir)
+        print(f"  Winners: {bold_green(', '.join(winners_display))}")
 
-    display_ranking_changes(conn, old_rankings, id_a, id_b, target_dir)
+    if pass_display:
+        print(f"  Pass to next round: {green(', '.join(pass_display))}")
+    else:
+        print(f"  Pass to next round: {dim('(none)')}")
 
-    if knockout_mode:
-        save_knockout_match(conn, id_a, id_b)
+    if eliminated_display:
+        print(f"  Eliminated: {bold_red(', '.join(eliminated_display))}\n")
+    else:
+        print(dim("  Eliminated: none\n"))
 
-        remove_winner = result in ['A-', 'B-']
-        keep_loser = result in ['A+', 'B+']
-
-        if result in ['A', 'A-', 'A+']:
-            if remove_winner:
-                eliminated.add(id_a)
-                save_elimination(conn, id_a)
-                display_path = display_name(path_a)
-                print(f"  {bold_green(display_path)} wins but is {bold_red('REMOVED')} from tournament!\n")
-            elif keep_loser:
-                display_path = display_name(path_a)
-                print(f"  {bold_green(display_path)} wins, but both players stay in tournament!\n")
-            else:
-                eliminated.add(id_b)
-                save_elimination(conn, id_b)
-                display_path = display_name(path_a)
-                print(f"  {bold_green(display_path)} {bold_green('PROCEEDS')}!\n")
-        elif result in ['B', 'B-', 'B+']:
-            if remove_winner:
-                eliminated.add(id_b)
-                save_elimination(conn, id_b)
-                display_path = display_name(path_b)
-                print(f"  {bold_green(display_path)} wins but is {bold_red('REMOVED')} from tournament!\n")
-            elif keep_loser:
-                display_path = display_name(path_b)
-                print(f"  {bold_green(display_path)} wins, but both players stay in tournament!\n")
-            else:
-                eliminated.add(id_a)
-                save_elimination(conn, id_a)
-                display_path = display_name(path_b)
-                print(f"  {bold_green(display_path)} {bold_green('PROCEEDS')}!\n")
-        elif result == 'TA-':
-            eliminated.add(id_a)
-            save_elimination(conn, id_a)
-            display_path = display_name(path_a)
-            print(f"  Tie, but {bold_red(display_path)} is {bold_red('REMOVED')} from tournament!\n")
-        elif result == 'TB-':
-            eliminated.add(id_b)
-            save_elimination(conn, id_b)
-            display_path = display_name(path_b)
-            print(f"  Tie, but {bold_red(display_path)} is {bold_red('REMOVED')} from tournament!\n")
-        elif result == 'T-':
-            eliminated.add(id_a)
-            eliminated.add(id_b)
-            save_elimination(conn, id_a)
-            save_elimination(conn, id_b)
-            print(f"  Tie, but {bold_red('BOTH')} players are {bold_red('REMOVED')} from tournament!\n")
-        else:
-            print(dim("  Tie - no one eliminated.\n"))
-
-        if tournament_pool:
-            remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
-                                  if f[0] in tournament_pool and f[0] not in eliminated])
-        else:
-            remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
-                                  if f[0] not in eliminated])
-        print(f"Players remaining: {bold(str(remaining_count))}\n")
+    if tournament_pool:
+        remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
+                               if f[0] in tournament_pool and f[0] not in eliminated])
+    else:
+        remaining_count = len([f for f in get_active_files(conn, target_dir, pattern)
+                               if f[0] not in eliminated])
+    print(f"Players remaining: {bold(str(remaining_count))}\n")
 
 
 def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_pool: set) -> bool:
@@ -126,7 +106,8 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
     if confirm == 'y' or confirm == 'yes':
         clear_knockout_state(conn)
         clear_knockout_pool(conn)
-        clear_knockout_matches(conn)
+        clear_round_played(conn)
+        reset_round_number(conn)
         eliminated.clear()
         tournament_pool.clear()
         print(green("Knockout tournament has been reset! All players are back in.\n"))
@@ -299,7 +280,8 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
 
             clear_knockout_state(conn)
             clear_knockout_pool(conn)
-            clear_knockout_matches(conn)
+            clear_round_played(conn)
+            reset_round_number(conn)
             eliminated.clear()
             tournament_pool.clear()
             print(green("Knockout tournament reset! All players are back in.\n"))

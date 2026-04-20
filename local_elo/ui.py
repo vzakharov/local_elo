@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import re
-from typing import Tuple, Optional
+from typing import List, Optional, Sequence, Tuple
 
 from .constants import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
@@ -170,23 +170,25 @@ def display_leaderboard(
 
 
 def display_ranking_changes(conn: sqlite3.Connection, old_rankings: dict,
-                           file_a_id: int, file_b_id: int, target_dir: str = '.') -> None:
-    """Display ranking changes for the two files that just competed."""
+                           file_ids: Sequence[int], target_dir: str = '.') -> None:
+    """Display ranking changes for the files that just competed."""
+    if not file_ids:
+        return
+
     cursor = conn.cursor()
 
     # Get new rankings
     new_rankings = get_rankings(conn)
 
-    # Get file info for both players with new Elo ratings
-    cursor.execute('SELECT id, path, elo FROM files WHERE id IN (?, ?)', (file_a_id, file_b_id))
+    placeholders = ",".join(["?"] * len(file_ids))
+    cursor.execute(f'SELECT id, path, elo FROM files WHERE id IN ({placeholders})', tuple(file_ids))
     files = cursor.fetchall()
 
     # Create a dict for easy lookup
     files_dict = {file_id: (path, new_elo) for file_id, path, new_elo in files}
 
     print(f"\n{bold('Rankings:')}")
-    # Display in order: A first, then B
-    for file_id in [file_a_id, file_b_id]:
+    for file_id in file_ids:
         if file_id not in files_dict:
             continue
 
@@ -229,36 +231,31 @@ def display_welcome_message(knockout_mode: bool) -> None:
     """Display welcome message and available commands."""
     if knockout_mode:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool {bold_red('(KNOCKOUT MODE)')}")
-        print(f"Commands: {bold('A/B')} (winner), {bold('a-/b-')} (win but remove winner), "
-              f"{bold('a+/b+')} (win but loser stays), {bold('t')} (tie), "
-              f"{bold('ta-/tb-/t-')} (tie but eliminate), {bold('o')} (open), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} a/b/ab, {bold('add')} <name>")
+        print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')}, "
+              f"{bold('t')} (tie+all pass), {bold('o')} (open shown files), "
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('add')} <name>, {bold('reset')}")
+        print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(yellow("Note: Losers are eliminated! Last one standing wins."))
         print(dim("Press Ctrl+C to exit\n"))
     else:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool")
-        print(f"Commands: {bold('A/B')} (winner), {bold('t')} (tie), {bold('o')} (open), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} a/b/ab")
+        print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')}, "
+              f"{bold('t')} (all tie), {bold('o')} (open shown files), "
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>")
+        print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(dim("Press Ctrl+C to exit\n"))
 
 
-def format_matchup(display_path_a: str, elo_a: float, rank_a, record_a: str,
-                   display_path_b: str, elo_b: float, rank_b, record_b: str,
-                   win_prob_display: str, prob_a: float = 0.5) -> str:
-    """Format matchup display string with colors."""
-    # Color the favored player's path
-    if prob_a >= 0.5:
-        path_a_colored = bold(display_path_a)
-        path_b_colored = display_path_b
-    else:
-        path_a_colored = display_path_a
-        path_b_colored = bold(display_path_b)
+def format_competition(competitors: List[Tuple[str, str, float, int, str]]) -> str:
+    """Format a multiplayer competition block with slot letters."""
+    if not competitors:
+        return ""
 
-    # Color win probability based on how lopsided the match is
-    max_prob = max(prob_a, 1 - prob_a)
-    prob_colored = prob_color(max_prob, win_prob_display)
+    strongest_slot = max(competitors, key=lambda c: c[2])[0]
+    lines = [bold("Competition:")]
+    for slot, display_path, elo, rank, record in competitors:
+        name = bold(display_path) if slot == strongest_slot else display_path
+        lines.append(f"  {bold(slot)}: {name} ({int(elo)} / #{rank} / {record})")
 
-    return (f"{bold('A')}: {path_a_colored} ({int(elo_a)} / #{rank_a} / {record_a})\n"
-            f"{dim('vs')}\n"
-            f"{bold('B')}: {path_b_colored} ({int(elo_b)} / #{rank_b} / {record_b})\n"
-            f"Win probability: {prob_colored}")
+    lines.append(dim("Command: slots for winners (e.g. ac), 't' for tie-all, '+' all pass, '-' winners do not pass"))
+    return "\n".join(lines)

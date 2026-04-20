@@ -39,6 +39,29 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create multiplayer match tables
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS matches (
+            id INTEGER PRIMARY KEY,
+            outcome TEXT NOT NULL,
+            tie_all INTEGER NOT NULL DEFAULT 0,
+            command TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS match_players (
+            match_id INTEGER NOT NULL,
+            file_id INTEGER NOT NULL,
+            slot_index INTEGER NOT NULL,
+            is_winner INTEGER NOT NULL DEFAULT 0,
+            did_pass INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (match_id, file_id),
+            FOREIGN KEY (match_id) REFERENCES matches(id),
+            FOREIGN KEY (file_id) REFERENCES files(id)
+        )
+    ''')
+
     # Create knockout_state table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS knockout_state (
@@ -56,16 +79,27 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
-    # Create knockout_matches table (tracks pairs that have already competed)
+    # Create knockout_round_played table (tracks who already played this round)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS knockout_matches (
-            file_a_id INTEGER,
-            file_b_id INTEGER,
-            PRIMARY KEY (file_a_id, file_b_id),
-            FOREIGN KEY (file_a_id) REFERENCES files(id),
-            FOREIGN KEY (file_b_id) REFERENCES files(id)
+        CREATE TABLE IF NOT EXISTS knockout_round_played (
+            file_id INTEGER PRIMARY KEY,
+            FOREIGN KEY (file_id) REFERENCES files(id)
         )
     ''')
+
+    # Create knockout_round_number table (single-row, tracks current round)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knockout_round_number (
+            round INTEGER NOT NULL DEFAULT 1,
+            total INTEGER
+        )
+    ''')
+
+    # Migrate: add total column if missing (existing DBs)
+    cursor.execute('PRAGMA table_info(knockout_round_number)')
+    columns = {row[1] for row in cursor.fetchall()}
+    if 'total' not in columns:
+        cursor.execute('ALTER TABLE knockout_round_number ADD COLUMN total INTEGER')
 
     conn.commit()
     return conn
@@ -146,31 +180,53 @@ def clear_knockout_pool(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def save_knockout_match(conn: sqlite3.Connection, id_a: int, id_b: int) -> None:
-    """Record that two players have competed in this knockout tournament."""
-    a, b = min(id_a, id_b), max(id_a, id_b)
+def save_round_played(conn: sqlite3.Connection, file_id: int) -> None:
+    """Mark a player as having played this round."""
     cursor = conn.cursor()
     try:
         cursor.execute(
-            'INSERT INTO knockout_matches (file_a_id, file_b_id) VALUES (?, ?)',
-            (a, b)
+            'INSERT INTO knockout_round_played (file_id) VALUES (?)',
+            (file_id,)
         )
         conn.commit()
     except sqlite3.IntegrityError:
         pass
 
 
-def load_knockout_matches(conn: sqlite3.Connection) -> set:
-    """Load all knockout match pairs. Returns set of frozensets of (id_a, id_b)."""
+def load_round_played(conn: sqlite3.Connection) -> set:
+    """Load IDs of players who have already played this round."""
     cursor = conn.cursor()
-    cursor.execute('SELECT file_a_id, file_b_id FROM knockout_matches')
-    return {frozenset((row[0], row[1])) for row in cursor.fetchall()}
+    cursor.execute('SELECT file_id FROM knockout_round_played')
+    return {row[0] for row in cursor.fetchall()}
 
 
-def clear_knockout_matches(conn: sqlite3.Connection) -> None:
-    """Clear all knockout match records."""
+def clear_round_played(conn: sqlite3.Connection) -> None:
+    """Clear round-played tracking (start a new round)."""
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM knockout_matches')
+    cursor.execute('DELETE FROM knockout_round_played')
+    conn.commit()
+
+
+def get_round_info(conn: sqlite3.Connection) -> tuple:
+    """Get current knockout round number and total players. Returns (round, total)."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT round, total FROM knockout_round_number LIMIT 1')
+    row = cursor.fetchone()
+    return (row[0], row[1]) if row else (1, None)
+
+
+def set_round_info(conn: sqlite3.Connection, round_num: int, total: int) -> None:
+    """Set round number and total players for this round."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_round_number')
+    cursor.execute('INSERT INTO knockout_round_number (round, total) VALUES (?, ?)', (round_num, total))
+    conn.commit()
+
+
+def reset_round_number(conn: sqlite3.Connection) -> None:
+    """Reset round number (clears the table)."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_round_number')
     conn.commit()
 
 
@@ -182,8 +238,17 @@ def remove_entry_from_database(conn: sqlite3.Connection, file_id: int) -> None:
     cursor = conn.cursor()
 
     cursor.execute('DELETE FROM knockout_state WHERE file_id = ?', (file_id,))
+    cursor.execute('DELETE FROM knockout_pool WHERE file_id = ?', (file_id,))
+    cursor.execute('DELETE FROM knockout_round_played WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM games WHERE file_a_id = ? OR file_b_id = ?',
                    (file_id, file_id))
+    cursor.execute('SELECT DISTINCT match_id FROM match_players WHERE file_id = ?', (file_id,))
+    match_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute('DELETE FROM match_players WHERE file_id = ?', (file_id,))
+    for match_id in match_ids:
+        cursor.execute('SELECT 1 FROM match_players WHERE match_id = ? LIMIT 1', (match_id,))
+        if cursor.fetchone() is None:
+            cursor.execute('DELETE FROM matches WHERE id = ?', (match_id,))
     cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
 
     conn.commit()

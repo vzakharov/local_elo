@@ -3,9 +3,10 @@ import sys
 import subprocess
 import sqlite3
 import threading
-from typing import Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from .constants import K_FACTOR, DEFAULT_ELO
+from .outcome import MatchOutcome
 
 
 def calculate_win_probability(elo_a: float, elo_b: float) -> float:
@@ -92,6 +93,130 @@ def update_elo_ratings(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
     return new_elo_a, new_elo_b
 
 
+def calculate_multiplayer_elo_deltas(elos: Sequence[float], outcome: MatchOutcome) -> List[float]:
+    """
+    Calculate Elo deltas for an N-player competition.
+
+    Uses normalized pairwise decomposition:
+        delta_i = K/(N-1) * sum_j(actual_ij - expected_ij)
+    """
+    n_players = len(elos)
+    if n_players < 2:
+        raise ValueError("At least two players are required for Elo updates")
+
+    residual_sums = [0.0] * n_players
+
+    for i in range(n_players):
+        for j in range(i + 1, n_players):
+            expected_i = calculate_win_probability(elos[i], elos[j])
+            expected_j = 1.0 - expected_i
+
+            if outcome.tie_all:
+                actual_i = actual_j = 0.5
+            else:
+                i_is_winner = i in outcome.winner_slots
+                j_is_winner = j in outcome.winner_slots
+                if i_is_winner == j_is_winner:
+                    actual_i = actual_j = 0.5
+                elif i_is_winner:
+                    actual_i, actual_j = 1.0, 0.0
+                else:
+                    actual_i, actual_j = 0.0, 1.0
+
+            residual_sums[i] += actual_i - expected_i
+            residual_sums[j] += actual_j - expected_j
+
+    scale = K_FACTOR / float(n_players - 1)
+    return [scale * residual for residual in residual_sums]
+
+
+def _outcome_label_for_storage(outcome: MatchOutcome) -> str:
+    if outcome.tie_all:
+        return "tie"
+    return "".join(sorted(chr(ord("a") + idx) for idx in outcome.winner_slots))
+
+
+def record_competition(
+    conn: sqlite3.Connection,
+    participants: Sequence[Tuple[int, float]],
+    outcome: MatchOutcome,
+    target_dir: str = ".",
+) -> Dict[int, float]:
+    """
+    Record an N-player competition and update Elo/stats.
+
+    participants: list of (file_id, current_elo) ordered by displayed slots.
+    Returns mapping file_id -> new_elo.
+    """
+    if len(participants) < 2:
+        raise ValueError("At least two participants are required")
+
+    file_ids = [file_id for file_id, _ in participants]
+    old_elos = [elo for _, elo in participants]
+    deltas = calculate_multiplayer_elo_deltas(old_elos, outcome)
+    new_elos_by_id = {
+        file_id: old_elo + delta
+        for (file_id, old_elo), delta in zip(participants, deltas)
+    }
+
+    winners = set(outcome.winner_slots)
+    cursor = conn.cursor()
+    for slot_index, file_id in enumerate(file_ids):
+        new_elo = new_elos_by_id[file_id]
+        if outcome.tie_all:
+            cursor.execute(
+                "UPDATE files SET elo = ?, ties = ties + 1 WHERE id = ?",
+                (new_elo, file_id),
+            )
+        elif slot_index in winners:
+            cursor.execute(
+                "UPDATE files SET elo = ?, wins = wins + 1 WHERE id = ?",
+                (new_elo, file_id),
+            )
+        else:
+            cursor.execute(
+                "UPDATE files SET elo = ?, losses = losses + 1 WHERE id = ?",
+                (new_elo, file_id),
+            )
+
+    # Keep legacy games table populated for strict backward compatibility in 2-player mode.
+    if len(participants) == 2:
+        result = "tie"
+        if not outcome.tie_all:
+            if 0 in winners and 1 not in winners:
+                result = "A"
+            elif 1 in winners and 0 not in winners:
+                result = "B"
+        cursor.execute(
+            "INSERT INTO games (file_a_id, file_b_id, result) VALUES (?, ?, ?)",
+            (file_ids[0], file_ids[1], result),
+        )
+
+    cursor.execute(
+        "INSERT INTO matches (outcome, tie_all, command) VALUES (?, ?, ?)",
+        (_outcome_label_for_storage(outcome), int(outcome.tie_all), outcome.raw_command),
+    )
+    match_id = cursor.lastrowid
+    for slot_index, file_id in enumerate(file_ids):
+        cursor.execute(
+            """
+            INSERT INTO match_players (match_id, file_id, slot_index, is_winner, did_pass)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                match_id,
+                file_id,
+                slot_index,
+                int(slot_index in winners),
+                int(slot_index in outcome.pass_slots),
+            ),
+        )
+
+    conn.commit()
+    _update_finder_comments_for_ids(conn, target_dir, file_ids)
+    return new_elos_by_id
+
+
 def redistribute_elo_delta(conn: sqlite3.Connection, delta: float,
                            skip_file_id: int, target_dir: str = '.') -> None:
     """
@@ -133,30 +258,17 @@ def redistribute_elo_delta(conn: sqlite3.Connection, delta: float,
 def record_game(conn: sqlite3.Connection, file_a_id: int, file_b_id: int,
                 elo_a: float, elo_b: float, result: str,
                 target_dir: str = '.') -> None:
-    """Record a game and update Elo ratings."""
-    cursor = conn.cursor()
+    """Backward-compatible wrapper that routes 2-player updates through multiplayer engine."""
+    if result == "A":
+        outcome = MatchOutcome(winner_slots={0}, pass_slots={0}, tie_all=False, raw_command="A")
+    elif result == "B":
+        outcome = MatchOutcome(winner_slots={1}, pass_slots={1}, tie_all=False, raw_command="B")
+    else:
+        outcome = MatchOutcome(winner_slots={0, 1}, pass_slots={0, 1}, tie_all=True, raw_command="T")
 
-    # Update Elo ratings
-    new_elo_a, new_elo_b = update_elo_ratings(conn, file_a_id, file_b_id, elo_a, elo_b, result)
-
-    # Update stats based on result
-    if result == 'A':
-        cursor.execute('UPDATE files SET elo = ?, wins = wins + 1 WHERE id = ?', (new_elo_a, file_a_id))
-        cursor.execute('UPDATE files SET elo = ?, losses = losses + 1 WHERE id = ?', (new_elo_b, file_b_id))
-    elif result == 'B':
-        cursor.execute('UPDATE files SET elo = ?, losses = losses + 1 WHERE id = ?', (new_elo_a, file_a_id))
-        cursor.execute('UPDATE files SET elo = ?, wins = wins + 1 WHERE id = ?', (new_elo_b, file_b_id))
-    else:  # tie
-        cursor.execute('UPDATE files SET elo = ?, ties = ties + 1 WHERE id = ?', (new_elo_a, file_a_id))
-        cursor.execute('UPDATE files SET elo = ?, ties = ties + 1 WHERE id = ?', (new_elo_b, file_b_id))
-
-    # Record the game
-    cursor.execute(
-        'INSERT INTO games (file_a_id, file_b_id, result) VALUES (?, ?, ?)',
-        (file_a_id, file_b_id, result)
+    record_competition(
+        conn,
+        participants=[(file_a_id, elo_a), (file_b_id, elo_b)],
+        outcome=outcome,
+        target_dir=target_dir,
     )
-
-    conn.commit()
-
-    # Update Finder comments for both players
-    _update_finder_comments_for_ids(conn, target_dir, [file_a_id, file_b_id])
