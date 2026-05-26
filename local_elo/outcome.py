@@ -1,6 +1,6 @@
 import string
 from dataclasses import dataclass
-from typing import Optional, Set
+from typing import Optional, Set, Tuple
 
 
 @dataclass(frozen=True)
@@ -107,3 +107,55 @@ def parse_outcome_command(command: str, player_count: int) -> MatchOutcome:
             return legacy
 
     return _parse_compact_outcome(command, player_count)
+
+
+def parse_outcome_with_lock_modifiers(command: str, player_count: int) -> Tuple[MatchOutcome, Set[int]]:
+    """
+    Parse a competition command with optional per-slot lock modifiers.
+
+    Examples:
+      ace!   -> winners: a,c,e ; locked: e
+      ac!e   -> winners: a,c,e ; locked: c
+      ac!e!  -> winners: a,c,e ; locked: c,e
+    """
+    compact = command.strip().lower()
+    if "!" not in compact:
+        return parse_outcome_command(command, player_count), set()
+
+    letters = slot_letters(player_count)
+    winners: list[str] = []
+    locked_slots: Set[int] = set()
+    seen: Set[str] = set()
+
+    idx = 0
+    while idx < len(compact):
+        char = compact[idx]
+        if char == "!":
+            raise ValueError("Lock marker '!' must follow a slot letter")
+        if char not in letters:
+            raise ValueError(f"Unknown player slot '{char}'")
+        if char in seen:
+            raise ValueError(f"Duplicate slot '{char}'")
+        seen.add(char)
+
+        winners.append(char)
+        is_locked = idx + 1 < len(compact) and compact[idx + 1] == "!"
+        if is_locked:
+            locked_slots.add(letters.index(char))
+            idx += 2
+        else:
+            idx += 1
+
+    if not winners:
+        raise ValueError("Winner set cannot be empty")
+
+    base_outcome = parse_outcome_command("".join(winners), player_count)
+    return (
+        MatchOutcome(
+            winner_slots=base_outcome.winner_slots,
+            pass_slots=base_outcome.pass_slots | locked_slots,
+            tie_all=base_outcome.tie_all,
+            raw_command=command,
+        ),
+        locked_slots,
+    )

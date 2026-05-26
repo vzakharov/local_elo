@@ -231,7 +231,7 @@ def display_welcome_message(knockout_mode: bool) -> None:
     """Display welcome message and available commands."""
     if knockout_mode:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool {bold_red('(KNOCKOUT MODE)')}")
-        print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')}, "
+        print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')} / {bold('ac!e!')}, "
               f"{bold('t')} (tie+all pass), {bold('o')} (open shown files), "
               f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('add')} <name>, {bold('reset')}")
         print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))

@@ -27,13 +27,89 @@ from .db import (
     load_knockout_state, save_elimination, clear_knockout_state,
     get_knockout_stats, export_knockout_results, save_knockout_pool,
     load_knockout_pool, clear_knockout_pool, clear_round_played,
-    save_round_played, reset_round_number, get_active_files, get_rankings
+    save_round_played, reset_round_number, get_active_files, get_rankings,
+    load_locked, save_locked, clear_locked, clear_locked_subset
 )
 from .elo import calculate_win_probability, record_competition
 from .outcome import MatchOutcome
 from .ui import display_leaderboard, display_ranking_changes
 from .colors import bold, bold_red, bold_green, bold_cyan, green, red, yellow, cyan, dim
 from .utils import display_name
+
+
+def handle_all_locked_unlock(conn: sqlite3.Connection, active_ids: set, locked: set) -> bool:
+    """
+    Unlock current lock tier when every active player is locked.
+    Returns True when an unlock cycle event occurred.
+    """
+    if not active_ids:
+        return False
+
+    active_locked = active_ids & locked
+    if active_locked != active_ids:
+        return False
+
+    clear_locked_subset(conn, active_ids)
+    locked.difference_update(active_ids)
+    print(dim("All active players are locked — unlocking this tier and allowing locks again."))
+    return True
+
+
+def effective_locked(active_ids: set, locked: set, match_size: int) -> set:
+    """
+    Compute which active players should be excluded by lock state.
+    Locks are ignored when unlocked players cannot fill the minimum required matchup size.
+    """
+    active_locked = active_ids & locked
+    if not active_locked:
+        return set()
+
+    min_required = min(match_size, len(active_ids))
+    unlocked_active_count = len(active_ids) - len(active_locked)
+    if unlocked_active_count < min_required:
+        return set()
+
+    return active_locked
+
+
+def handle_lock_command(conn: sqlite3.Connection, arg: str,
+                        competitors: List[Tuple[int, str]], locked: set) -> bool:
+    """
+    Lock competitor(s) by slot letter sequence, e.g. 'a', 'ace'.
+    Returns True to signal need for new matchup.
+    """
+    arg = arg.lower()
+    valid_slots = {chr(ord('a') + idx): (file_id, path) for idx, (file_id, path) in enumerate(competitors)}
+    if not arg or any(ch not in valid_slots for ch in arg):
+        printable = "".join(valid_slots.keys())
+        print(red(f"  Invalid lock argument: '{arg}'. Use one or more of: {printable}"))
+        return False
+
+    to_lock = []
+    seen = set()
+    for ch in arg:
+        if ch in seen:
+            continue
+        seen.add(ch)
+        to_lock.append(valid_slots[ch])
+
+    locked_now = []
+    already_locked = []
+    for file_id, file_path in to_lock:
+        disp = display_name(file_path)
+        if file_id in locked:
+            already_locked.append(disp)
+            continue
+        save_locked(conn, file_id)
+        locked.add(file_id)
+        locked_now.append(disp)
+
+    if locked_now:
+        print(f"{green('!')} Locked: {cyan(', '.join(locked_now))}")
+    if already_locked:
+        print(dim(f"  Already locked: {', '.join(already_locked)}"))
+
+    return bool(locked_now)
 
 
 def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
@@ -97,7 +173,7 @@ def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
     print(f"Players remaining: {bold(str(remaining_count))}\n")
 
 
-def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_pool: set) -> bool:
+def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_pool: set, locked: set) -> bool:
     """
     Handle the 'reset' command in knockout mode.
     Returns True if should break out of input loop to re-sync.
@@ -107,9 +183,11 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
         clear_knockout_state(conn)
         clear_knockout_pool(conn)
         clear_round_played(conn)
+        clear_locked(conn)
         reset_round_number(conn)
         eliminated.clear()
         tournament_pool.clear()
+        locked.clear()
         print(green("Knockout tournament has been reset! All players are back in.\n"))
         return True
     else:
@@ -118,13 +196,14 @@ def handle_reset_command(conn: sqlite3.Connection, eliminated: set, tournament_p
 
 
 def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pattern: str,
-                                    pool_config: Optional[PoolConfig], power: Tuple[float, float]) -> Tuple[set, set]:
+                                    pool_config: Optional[PoolConfig], power: Tuple[float, float]) -> Tuple[set, set, set]:
     """
     Initialize or resume a knockout tournament.
-    Returns (eliminated, tournament_pool) sets.
+    Returns (eliminated, tournament_pool, locked) sets.
     """
     eliminated = load_knockout_state(conn)
     tournament_pool = load_knockout_pool(conn)
+    locked = load_locked(conn)
 
     if eliminated or tournament_pool:
         if pool_config:
@@ -242,11 +321,11 @@ def initialize_knockout_tournament(conn: sqlite3.Connection, target_dir: str, pa
     all_active_ids = [f[0] for f in get_active_files(conn, target_dir, pattern)]
     _update_finder_comments_for_ids(conn, target_dir, all_active_ids)
 
-    return eliminated, tournament_pool
+    return eliminated, tournament_pool, locked
 
 
 def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str,
-                         eliminated: set, tournament_pool: set) -> bool:
+                         eliminated: set, tournament_pool: set, locked: set) -> bool:
     """
     Display winner screen and handle reset/quit.
     Returns True if should exit main loop, False to continue.
@@ -281,9 +360,11 @@ def handle_winner_screen(conn: sqlite3.Connection, target_dir: str, pattern: str
             clear_knockout_state(conn)
             clear_knockout_pool(conn)
             clear_round_played(conn)
+            clear_locked(conn)
             reset_round_number(conn)
             eliminated.clear()
             tournament_pool.clear()
+            locked.clear()
             print(green("Knockout tournament reset! All players are back in.\n"))
             break
         elif user_input in ['q', 'quit']:

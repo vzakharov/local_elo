@@ -3,10 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from local_elo.db import add_file_to_db, init_db, load_round_played
+from local_elo.db import add_file_to_db, init_db, load_round_played, load_locked
 from local_elo.elo import calculate_multiplayer_elo_deltas, record_competition, update_elo_ratings
-from local_elo.knockout import handle_game_result
-from local_elo.outcome import MatchOutcome, parse_outcome_command
+from local_elo.knockout import (
+    effective_locked, handle_all_locked_unlock, handle_game_result, handle_lock_command
+)
+from local_elo.outcome import MatchOutcome, parse_outcome_command, parse_outcome_with_lock_modifiers
 
 
 class MultiplayerParserTests(unittest.TestCase):
@@ -30,6 +32,30 @@ class MultiplayerParserTests(unittest.TestCase):
     def test_invalid_duplicate_slot(self):
         with self.assertRaises(ValueError):
             parse_outcome_command("aac", 4)
+
+    def test_inline_lock_modifier_locks_last_slot(self):
+        outcome, locked = parse_outcome_with_lock_modifiers("ace!", 5)
+        self.assertEqual(outcome.winner_slots, {0, 2, 4})
+        self.assertEqual(outcome.pass_slots, {0, 2, 4})
+        self.assertEqual(locked, {4})
+
+    def test_inline_lock_modifier_locks_middle_slot(self):
+        outcome, locked = parse_outcome_with_lock_modifiers("ac!e", 5)
+        self.assertEqual(outcome.winner_slots, {0, 2, 4})
+        self.assertEqual(outcome.pass_slots, {0, 2, 4})
+        self.assertEqual(locked, {2})
+
+    def test_inline_lock_modifier_locks_multiple_slots(self):
+        outcome, locked = parse_outcome_with_lock_modifiers("ac!e!", 5)
+        self.assertEqual(outcome.winner_slots, {0, 2, 4})
+        self.assertEqual(outcome.pass_slots, {0, 2, 4})
+        self.assertEqual(locked, {2, 4})
+
+    def test_inline_lock_all_winners_can_be_locked(self):
+        outcome, locked = parse_outcome_with_lock_modifiers("a!", 2)
+        self.assertEqual(outcome.winner_slots, {0})
+        self.assertEqual(outcome.pass_slots, {0})
+        self.assertEqual(locked, {0})
 
 
 class MultiplayerEloTests(unittest.TestCase):
@@ -91,6 +117,110 @@ class KnockoutPassFlowTests(unittest.TestCase):
             expected_eliminated = {competitors[0][0], competitors[1][0]}
             self.assertEqual(eliminated, expected_eliminated)
             self.assertEqual(load_round_played(conn), {competitors[2][0]})
+
+
+class KnockoutLockFlowTests(unittest.TestCase):
+    def test_lock_command_supports_multiple_slots(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]:
+                add_file_to_db(conn, name)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, path FROM files ORDER BY path")
+            competitors = cursor.fetchall()
+            locked = set()
+
+            changed = handle_lock_command(conn, "ace", competitors, locked)
+            self.assertTrue(changed)
+
+            expected_locked = {competitors[0][0], competitors[2][0], competitors[4][0]}
+            self.assertEqual(locked, expected_locked)
+            self.assertEqual(load_locked(conn), expected_locked)
+
+    def test_effective_locked_excludes_when_unlocked_can_fill_match(self):
+        active = {1, 2, 3, 4, 5}
+        locked = {1, 3}
+        self.assertEqual(effective_locked(active, locked, match_size=3), {1, 3})
+
+    def test_effective_locked_ignored_when_unlocked_cannot_fill_match(self):
+        active = set(range(1, 11))
+        locked = {1, 2, 3}
+        self.assertEqual(effective_locked(active, locked, match_size=10), set())
+
+    def test_all_locked_unlock_cycle_clears_active_locks(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt"]:
+                add_file_to_db(conn, name)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, path FROM files ORDER BY path")
+            competitors = cursor.fetchall()
+            locked = set()
+
+            handle_lock_command(conn, "abc", competitors, locked)
+            active_ids = {file_id for file_id, _ in competitors}
+
+            unlocked = handle_all_locked_unlock(conn, active_ids, locked)
+            self.assertTrue(unlocked)
+            self.assertEqual(locked, set())
+            self.assertEqual(load_locked(conn), set())
+
+            relock = handle_lock_command(conn, "a", competitors, locked)
+            self.assertTrue(relock)
+            self.assertEqual(len(locked), 1)
+
+    def test_lock_suffix_flow_keeps_normal_game_scoring_then_locks(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["a.txt", "b.txt"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["a.txt", "b.txt"]:
+                add_file_to_db(conn, name)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, path, elo, wins, losses, ties FROM files ORDER BY path")
+            competitors = cursor.fetchall()
+            a_id = competitors[0][0]
+            b_id = competitors[1][0]
+
+            eliminated = set()
+            outcome = parse_outcome_command("a", 2)
+            with patch("local_elo.elo.sys.platform", "linux"), patch("local_elo.knockout.sys.platform", "linux"):
+                handle_game_result(
+                    conn=conn,
+                    outcome=outcome,
+                    competitors=competitors,
+                    target_dir=tmp_dir,
+                    knockout_mode=True,
+                    eliminated=eliminated,
+                    pattern=".*",
+                    tournament_pool=set(),
+                )
+
+            cursor.execute("SELECT id, elo, wins, losses, ties FROM files WHERE id IN (?, ?) ORDER BY id", (a_id, b_id))
+            rows = cursor.fetchall()
+            by_id = {row[0]: row[1:] for row in rows}
+
+            self.assertGreater(by_id[a_id][0], 1000.0)
+            self.assertLess(by_id[b_id][0], 1000.0)
+            self.assertEqual(eliminated, {b_id})
+
+            locked = set()
+            locked_changed = handle_lock_command(conn, "a", [(a_id, "a.txt"), (b_id, "b.txt")], locked)
+            self.assertTrue(locked_changed)
+            self.assertEqual(locked, {a_id})
 
 
 if __name__ == "__main__":

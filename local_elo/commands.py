@@ -8,11 +8,12 @@ from .files import handle_open_command, handle_rename_command, handle_rem_comman
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_competition
 from .game import select_match_players
 from .knockout import (
-    handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen
+    handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen,
+    effective_locked, handle_all_locked_unlock, handle_lock_command
 )
 from .colors import red, yellow, dim
 from .utils import display_name, extensions_to_pattern
-from .outcome import parse_outcome_command, slot_letters
+from .outcome import parse_outcome_command, parse_outcome_with_lock_modifiers, slot_letters
 
 
 def parse_pool_size(value: str):
@@ -157,12 +158,13 @@ def main():
 
     try:
         if args.knockout:
-            eliminated, tournament_pool = initialize_knockout_tournament(
+            eliminated, tournament_pool, locked = initialize_knockout_tournament(
                 conn, args.target_dir, pattern, args.pool_size, args.power
             )
         else:
             eliminated = set()
             tournament_pool = set()
+            locked = set()
 
         display_welcome_message(args.knockout)
 
@@ -189,7 +191,7 @@ def main():
             if len(files) == 1:
                 if args.knockout:
                     should_exit = handle_winner_screen(
-                        conn, args.target_dir, pattern, eliminated, tournament_pool
+                        conn, args.target_dir, pattern, eliminated, tournament_pool, locked
                     )
                     if should_exit:
                         break
@@ -199,14 +201,22 @@ def main():
 
             # Select players for this competition
             if args.knockout:
+                active_ids = {f[0] for f in files}
+                handle_all_locked_unlock(conn, active_ids, locked)
                 round_played = load_round_played(conn)
-                eligible = [f for f in files if f[0] not in round_played]
+                locked_effective = effective_locked(active_ids, locked, args.match_size)
+                eligible = [f for f in files if f[0] not in round_played and f[0] not in locked_effective]
 
                 min_required = min(args.match_size, len(files))
                 if len(eligible) < min_required:
                     clear_round_played(conn)
                     round_played = set()
-                    eligible = files
+                    locked_effective = effective_locked(active_ids, locked, args.match_size)
+                    eligible = [f for f in files if f[0] not in round_played and f[0] not in locked_effective]
+                    if len(eligible) < min_required:
+                        if locked_effective:
+                            print(dim("Locked players are needed to fill this matchup size — ignoring locks this round."))
+                        eligible = [f for f in files if f[0] not in round_played]
                     round_num, _ = get_round_info(conn)
                     round_num += 1
                     set_round_info(conn, round_num, len(eligible))
@@ -217,7 +227,8 @@ def main():
                     set_round_info(conn, round_num, len(eligible))
                     round_total = len(eligible)
                 promoted = len(round_played)
-                print(dim(f"Round {round_num} — {len(eligible)}/{round_total} players left, {promoted} promoted"))
+                locked_count = len(active_ids & locked)
+                print(dim(f"Round {round_num} — {len(eligible)}/{round_total} players left, {promoted} promoted, {locked_count} locked"))
 
                 competition_players = select_match_players(eligible, args.match_size, args.power)
             else:
@@ -249,7 +260,7 @@ def main():
                 slot_hint = "".join(slots)
                 if args.knockout:
                     user_input = input(
-                        f"Your choice ({slot_hint}[+/-]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/reset): "
+                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/reset): "
                     ).strip()
                 else:
                     user_input = input(
@@ -298,7 +309,7 @@ def main():
 
                 # Check for reset command (knockout mode only)
                 if user_input.lower() == 'reset':
-                    if handle_reset_command(conn, eliminated, tournament_pool):
+                    if handle_reset_command(conn, eliminated, tournament_pool, locked):
                         # Break out of input loop to re-sync and start fresh
                         break
                     else:
@@ -330,10 +341,15 @@ def main():
                     continue
 
                 try:
-                    outcome = parse_outcome_command(user_input, len(competition_players))
+                    if args.knockout:
+                        outcome, lock_slots = parse_outcome_with_lock_modifiers(user_input, len(competition_players))
+                        lock_arg = "".join(slots[idx] for idx in sorted(lock_slots))
+                    else:
+                        outcome = parse_outcome_command(user_input, len(competition_players))
+                        lock_arg = ""
                 except ValueError as exc:
                     if args.knockout:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, add, or reset"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, add, or reset"))
                     else:
                         print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, or rem"))
                     continue
@@ -348,6 +364,9 @@ def main():
                     pattern,
                     tournament_pool,
                 )
+                if lock_arg:
+                    visible_competitors = [(player[0], player[1]) for player in competition_players]
+                    handle_lock_command(conn, lock_arg, visible_competitors, locked)
                 break
 
     except KeyboardInterrupt:

@@ -243,6 +243,7 @@ def handle_open_command(paths: List[str], target_dir: str) -> None:
         return
 
     abs_paths = [os.path.abspath(os.path.join(target_dir, path)) for path in paths]
+    abs_paths.reverse()
 
     custom_script = None
     if sys.platform in ['darwin', 'linux'] or sys.platform.startswith('linux'):

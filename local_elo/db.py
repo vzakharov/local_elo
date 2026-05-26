@@ -87,6 +87,14 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create knockout_locked table (tracks players locked out until unlock conditions)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knockout_locked (
+            file_id INTEGER PRIMARY KEY,
+            FOREIGN KEY (file_id) REFERENCES files(id)
+        )
+    ''')
+
     # Create knockout_round_number table (single-row, tracks current round)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS knockout_round_number (
@@ -207,6 +215,45 @@ def clear_round_played(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def save_locked(conn: sqlite3.Connection, file_id: int) -> None:
+    """Mark a player as locked."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'INSERT INTO knockout_locked (file_id) VALUES (?)',
+            (file_id,)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+
+
+def load_locked(conn: sqlite3.Connection) -> set:
+    """Load IDs of players who are currently locked."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_id FROM knockout_locked')
+    return {row[0] for row in cursor.fetchall()}
+
+
+def clear_locked(conn: sqlite3.Connection) -> None:
+    """Clear all lock state."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM knockout_locked')
+    conn.commit()
+
+
+def clear_locked_subset(conn: sqlite3.Connection, file_ids: set) -> None:
+    """Clear lock state for a specific set of file IDs."""
+    if not file_ids:
+        return
+    cursor = conn.cursor()
+    cursor.executemany(
+        'DELETE FROM knockout_locked WHERE file_id = ?',
+        [(file_id,) for file_id in file_ids]
+    )
+    conn.commit()
+
+
 def get_round_info(conn: sqlite3.Connection) -> tuple:
     """Get current knockout round number and total players. Returns (round, total)."""
     cursor = conn.cursor()
@@ -240,6 +287,7 @@ def remove_entry_from_database(conn: sqlite3.Connection, file_id: int) -> None:
     cursor.execute('DELETE FROM knockout_state WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM knockout_pool WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM knockout_round_played WHERE file_id = ?', (file_id,))
+    cursor.execute('DELETE FROM knockout_locked WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM games WHERE file_a_id = ? OR file_b_id = ?',
                    (file_id, file_id))
     cursor.execute('SELECT DISTINCT match_id FROM match_players WHERE file_id = ?', (file_id,))
