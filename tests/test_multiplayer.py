@@ -274,7 +274,7 @@ class RefreshCommandTests(unittest.TestCase):
                 survivors = ["a.txt", "c.txt", "e.txt"]
                 shift = sum(before[p] - 1000 for p in ("b.txt", "d.txt")) / len(survivors)
 
-                removed = handle_refresh_command(conn, tmp_dir)
+                removed = handle_refresh_command(conn, tmp_dir, confirm=False)
 
             # Stale rows gone, two removed.
             self.assertEqual(len(removed), 2)
@@ -300,7 +300,7 @@ class RefreshCommandTests(unittest.TestCase):
 
             before = self._elos_by_path(conn)
             with patch("local_elo.elo.sys.platform", "linux"):
-                removed = handle_refresh_command(conn, tmp_dir)
+                removed = handle_refresh_command(conn, tmp_dir, confirm=False)
 
             self.assertEqual(removed, set())
             self.assertEqual(self._elos_by_path(conn), before)
@@ -318,10 +318,53 @@ class RefreshCommandTests(unittest.TestCase):
 
             os.remove(tmp_path / "gone.png")
             with patch("local_elo.elo.sys.platform", "linux"):
-                removed = handle_refresh_command(conn, tmp_dir)
+                removed = handle_refresh_command(conn, tmp_dir, confirm=False)
 
             self.assertEqual(len(removed), 1)
             self.assertEqual(set(self._elos_by_path(conn).keys()), {"keep.png"})
+
+    def _setup_one_stale(self, tmp_dir):
+        tmp_path = Path(tmp_dir)
+        for name in ["keep.txt", "gone.txt"]:
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        conn = init_db(tmp_dir)
+        for name in ["keep.txt", "gone.txt"]:
+            add_file_to_db(conn, name)
+        os.remove(tmp_path / "gone.txt")
+        return conn
+
+    def test_refresh_confirm_no_cancels(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn = self._setup_one_stale(tmp_dir)
+            before = self._elos_by_path(conn)
+            with patch("local_elo.elo.sys.platform", "linux"), \
+                 patch("builtins.input", return_value="n"):
+                removed = handle_refresh_command(conn, tmp_dir)  # confirm defaults True
+
+            # Nothing deleted, Elos untouched.
+            self.assertEqual(removed, set())
+            self.assertEqual(set(self._elos_by_path(conn).keys()), {"keep.txt", "gone.txt"})
+            self.assertEqual(self._elos_by_path(conn), before)
+
+    def test_refresh_confirm_blank_cancels(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn = self._setup_one_stale(tmp_dir)
+            with patch("local_elo.elo.sys.platform", "linux"), \
+                 patch("builtins.input", return_value=""):
+                removed = handle_refresh_command(conn, tmp_dir)
+
+            self.assertEqual(removed, set())
+            self.assertEqual(set(self._elos_by_path(conn).keys()), {"keep.txt", "gone.txt"})
+
+    def test_refresh_confirm_yes_proceeds(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn = self._setup_one_stale(tmp_dir)
+            with patch("local_elo.elo.sys.platform", "linux"), \
+                 patch("builtins.input", return_value="y"):
+                removed = handle_refresh_command(conn, tmp_dir)
+
+            self.assertEqual(len(removed), 1)
+            self.assertEqual(set(self._elos_by_path(conn).keys()), {"keep.txt"})
 
     def test_redistribute_elo_delta_skip_none_updates_all(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

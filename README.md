@@ -63,7 +63,10 @@ N × 1000), then exit:
 ```bash
 python3 local_elo.py --refresh
 ```
-You can also type `refresh` during a session to do the same without exiting.
+Refresh first lists the stale entries it's about to delete and asks for
+confirmation (`y/N`), so you can preview the cleanup and answer `N` to abort
+without changes. You can also type `refresh` during a session to do the same
+without exiting.
 Refresh never adds files that exist on disk but aren't yet tracked — those are
 picked up automatically as you play.
 
@@ -79,7 +82,7 @@ Your choice (A/B/=/top [N]):
 - `=` - They're equally good (tie)
 - `top` - Show top 10 files
 - `top 20` - Show top 20 files
-- `refresh` - Purge database entries whose files no longer exist on disk and recalculate remaining Elos
+- `refresh` - Purge database entries whose files no longer exist on disk and recalculate remaining Elos (lists what will be deleted and asks for confirmation first)
 - `Ctrl+C` - Exit
 
 ### Example session
