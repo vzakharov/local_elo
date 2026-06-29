@@ -218,7 +218,7 @@ def record_competition(
 
 
 def redistribute_elo_delta(conn: sqlite3.Connection, delta: float,
-                           skip_file_id: int, target_dir: str = '.') -> None:
+                           skip_file_id: int = None, target_dir: str = '.') -> None:
     """
     Redistribute delta uniformly across remaining entries.
     This preserves all pairwise win probabilities since rating gaps stay unchanged.
@@ -226,14 +226,19 @@ def redistribute_elo_delta(conn: sqlite3.Connection, delta: float,
     Args:
         conn: Database connection
         delta: Amount to redistribute (removed_elo - 1000)
-        skip_file_id: ID of removed entry (exclude from redistribution)
+        skip_file_id: ID of removed entry to exclude from redistribution.
+            Pass None to redistribute across all current entries (e.g. when the
+            removed entries have already been deleted from the database).
         target_dir: Target directory for Finder comment updates
     """
     if abs(delta) < 0.01:
         return
 
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM files WHERE id != ?', (skip_file_id,))
+    if skip_file_id is None:
+        cursor.execute('SELECT COUNT(*) FROM files')
+    else:
+        cursor.execute('SELECT COUNT(*) FROM files WHERE id != ?', (skip_file_id,))
     count = cursor.fetchone()[0]
 
     if count == 0:
@@ -242,15 +247,21 @@ def redistribute_elo_delta(conn: sqlite3.Connection, delta: float,
 
     adjustment = delta / count
 
-    cursor.execute(
-        'UPDATE files SET elo = elo + ? WHERE id != ?',
-        (adjustment, skip_file_id)
-    )
+    if skip_file_id is None:
+        cursor.execute('UPDATE files SET elo = elo + ?', (adjustment,))
+    else:
+        cursor.execute(
+            'UPDATE files SET elo = elo + ? WHERE id != ?',
+            (adjustment, skip_file_id)
+        )
 
     conn.commit()
 
     # Update Finder comments for all affected files
-    cursor.execute('SELECT id FROM files WHERE id != ?', (skip_file_id,))
+    if skip_file_id is None:
+        cursor.execute('SELECT id FROM files')
+    else:
+        cursor.execute('SELECT id FROM files WHERE id != ?', (skip_file_id,))
     affected_ids = [row[0] for row in cursor.fetchall()]
     _update_finder_comments_for_ids(conn, target_dir, affected_ids)
 

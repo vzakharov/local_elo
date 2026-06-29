@@ -3,8 +3,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import os
+
 from local_elo.db import add_file_to_db, init_db, load_round_played, load_locked
-from local_elo.elo import calculate_multiplayer_elo_deltas, record_competition, update_elo_ratings
+from local_elo.elo import (
+    calculate_multiplayer_elo_deltas, record_competition, redistribute_elo_delta,
+    update_elo_ratings,
+)
+from local_elo.files import handle_refresh_command
 from local_elo.knockout import (
     effective_locked, handle_all_locked_unlock, handle_game_result, handle_lock_command
 )
@@ -221,6 +227,119 @@ class KnockoutLockFlowTests(unittest.TestCase):
             locked_changed = handle_lock_command(conn, "a", [(a_id, "a.txt"), (b_id, "b.txt")], locked)
             self.assertTrue(locked_changed)
             self.assertEqual(locked, {a_id})
+
+
+class RefreshCommandTests(unittest.TestCase):
+    def _elos_by_path(self, conn):
+        cursor = conn.cursor()
+        cursor.execute("SELECT path, elo FROM files")
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def test_refresh_purges_stale_and_preserves_total(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]
+            for name in names:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in names:
+                add_file_to_db(conn, name)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, path, elo, wins, losses, ties FROM files ORDER BY path")
+            rows = cursor.fetchall()
+            by_path = {row[1]: row for row in rows}
+
+            with patch("local_elo.elo.sys.platform", "linux"):
+                # Diverge Elos with a couple of matches (total stays 5000).
+                record_competition(
+                    conn,
+                    participants=[(by_path["a.txt"][0], 1000.0), (by_path["b.txt"][0], 1000.0)],
+                    outcome=MatchOutcome(winner_slots={0}, pass_slots={0}, tie_all=False, raw_command="a"),
+                    target_dir=tmp_dir,
+                )
+                record_competition(
+                    conn,
+                    participants=[(by_path["c.txt"][0], 1000.0), (by_path["d.txt"][0], 1000.0)],
+                    outcome=MatchOutcome(winner_slots={0}, pass_slots={0}, tie_all=False, raw_command="a"),
+                    target_dir=tmp_dir,
+                )
+
+                # Two files vanish from disk; their DB rows remain.
+                os.remove(tmp_path / "b.txt")
+                os.remove(tmp_path / "d.txt")
+
+                before = self._elos_by_path(conn)
+                survivors = ["a.txt", "c.txt", "e.txt"]
+                shift = sum(before[p] - 1000 for p in ("b.txt", "d.txt")) / len(survivors)
+
+                removed = handle_refresh_command(conn, tmp_dir)
+
+            # Stale rows gone, two removed.
+            self.assertEqual(len(removed), 2)
+            after = self._elos_by_path(conn)
+            self.assertEqual(set(after.keys()), set(survivors))
+
+            # Total Elo restored to (remaining N) x 1000.
+            self.assertAlmostEqual(sum(after.values()), len(survivors) * 1000, places=6)
+
+            # Redistribution is a uniform shift -> pairwise gaps preserved.
+            for p in survivors:
+                self.assertAlmostEqual(after[p], before[p] + shift, places=6)
+
+    def test_refresh_noop_when_all_present(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["a.txt", "b.txt"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["a.txt", "b.txt"]:
+                add_file_to_db(conn, name)
+
+            before = self._elos_by_path(conn)
+            with patch("local_elo.elo.sys.platform", "linux"):
+                removed = handle_refresh_command(conn, tmp_dir)
+
+            self.assertEqual(removed, set())
+            self.assertEqual(self._elos_by_path(conn), before)
+
+    def test_refresh_ignores_pattern_keeps_existing_files(self):
+        # A file that exists but wouldn't match a filter must NOT be removed.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["keep.png", "gone.png"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["keep.png", "gone.png"]:
+                add_file_to_db(conn, name)
+
+            os.remove(tmp_path / "gone.png")
+            with patch("local_elo.elo.sys.platform", "linux"):
+                removed = handle_refresh_command(conn, tmp_dir)
+
+            self.assertEqual(len(removed), 1)
+            self.assertEqual(set(self._elos_by_path(conn).keys()), {"keep.png"})
+
+    def test_redistribute_elo_delta_skip_none_updates_all(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt", "d.txt"]:
+                (tmp_path / name).write_text("x", encoding="utf-8")
+
+            conn = init_db(tmp_dir)
+            for name in ["a.txt", "b.txt", "c.txt", "d.txt"]:
+                add_file_to_db(conn, name)
+
+            with patch("local_elo.elo.sys.platform", "linux"):
+                redistribute_elo_delta(conn, 40.0, target_dir=tmp_dir)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT elo FROM files")
+            elos = [row[0] for row in cursor.fetchall()]
+            self.assertTrue(all(abs(elo - 1010.0) < 1e-6 for elo in elos))
 
 
 if __name__ == "__main__":
