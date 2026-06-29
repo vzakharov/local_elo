@@ -156,6 +156,63 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
     return True
 
 
+def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
+                           eliminated: set = None, tournament_pool: set = None,
+                           locked: set = None) -> set:
+    """
+    Delete DB entries whose file no longer exists on disk, then recalculate
+    remaining Elos once so total = (remaining N) x 1000.
+
+    The recalculation (which spawns the CPU-intensive Finder-comment update) is
+    deliberately batched into a single pass at the end rather than run per
+    removed entry. Files that exist on disk but are missing from the DB are NOT
+    handled here — they are added routinely by sync_files during normal play.
+
+    The current regex pattern is intentionally ignored: a file that exists but
+    doesn't match the active filter is still on disk and must not be removed.
+
+    Returns the set of removed file IDs.
+    """
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, path, elo FROM files')
+    all_rows = cursor.fetchall()
+
+    stale = [
+        (file_id, path, elo)
+        for file_id, path, elo in all_rows
+        if not os.path.exists(os.path.join(target_dir, path))
+    ]
+
+    if not stale:
+        print(dim(f"Nothing to refresh — all {len(all_rows)} entries exist on disk."))
+        return set()
+
+    total_delta = 0.0
+    removed_ids = set()
+    for file_id, path, elo in stale:
+        total_delta += elo - 1000
+        remove_entry_from_database(conn, file_id)
+        removed_ids.add(file_id)
+
+    # Clean up in-memory tracking sets when provided (mirrors handle_rem_command).
+    for tracking_set in (eliminated, tournament_pool, locked):
+        if tracking_set is not None:
+            tracking_set -= removed_ids
+
+    remaining = len(all_rows) - len(removed_ids)
+
+    # Single recalculation pass at the end (one Finder-comment update for all).
+    redistribute_elo_delta(conn, total_delta, target_dir=target_dir)
+
+    entry_word = "entry" if len(removed_ids) == 1 else "entries"
+    print(
+        f"{green('✓')} Removed {bold(str(len(removed_ids)))} stale {entry_word}, "
+        f"redistributed {bold(f'{total_delta:+.1f}')} Elo across {remaining} file(s)"
+    )
+
+    return removed_ids
+
+
 def handle_add_command(conn: sqlite3.Connection, arg: str, target_dir: str,
                        pattern: str, eliminated: set, tournament_pool: set) -> bool:
     """

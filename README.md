@@ -55,6 +55,18 @@ python3 local_elo.py "\.(txt|md)$"
 python3 local_elo.py "\.mp4$"
 ```
 
+### Refresh the database
+If you've deleted or moved files outside the tool, their database entries become
+stale. Run a one-shot refresh to purge any entries whose files no longer exist on
+disk and redistribute their Elo across the survivors (total Elo always stays
+N × 1000), then exit:
+```bash
+python3 local_elo.py --refresh
+```
+You can also type `refresh` during a session to do the same without exiting.
+Refresh never adds files that exist on disk but aren't yet tracked — those are
+picked up automatically as you play.
+
 ### During gameplay
 ```
 A: photo1.jpg (1520) vs B: photo2.jpg (1480)
@@ -67,6 +79,7 @@ Your choice (A/B/=/top [N]):
 - `=` - They're equally good (tie)
 - `top` - Show top 10 files
 - `top 20` - Show top 20 files
+- `refresh` - Purge database entries whose files no longer exist on disk and recalculate remaining Elos
 - `Ctrl+C` - Exit
 
 ### Example session

@@ -4,7 +4,7 @@ import os
 import argparse
 
 from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info
-from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, sync_files
+from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, handle_refresh_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_competition
 from .game import select_match_players
 from .knockout import (
@@ -128,6 +128,9 @@ def main():
                        help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')
     parser.add_argument('-m', '--match-size', dest='match_size', type=int, default=2,
                        help='Number of players shown in each competition round (default: 2, max: 26)')
+    parser.add_argument('-r', '--refresh', action='store_true',
+                       help='Delete DB entries whose files no longer exist on disk, '
+                            'recalculate remaining Elos (total = N x 1000), then exit.')
     args = parser.parse_args()
 
     # Set global link pattern
@@ -155,6 +158,14 @@ def main():
 
     # Initialize database
     conn = init_db(args.target_dir)
+
+    # One-shot refresh: clean stale DB entries, recalculate Elos, then exit.
+    # Note: we deliberately do NOT sync_files here — refresh only removes entries
+    # whose files are gone, it does not add newly-present files.
+    if args.refresh:
+        handle_refresh_command(conn, args.target_dir)
+        conn.close()
+        return
 
     try:
         if args.knockout:
@@ -260,11 +271,11 @@ def main():
                 slot_hint = "".join(slots)
                 if args.knockout:
                     user_input = input(
-                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/reset): "
+                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/refresh/reset): "
                     ).strip()
                 else:
                     user_input = input(
-                        f"Your choice ({slot_hint}/t/o/top [N]/ren <old> <new>/rem <slots>): "
+                        f"Your choice ({slot_hint}/t/o/top [N]/ren <old> <new>/rem <slots>/refresh): "
                     ).strip()
 
                 # Check for top command
@@ -304,6 +315,17 @@ def main():
                             format_record(player),
                         ))
                     matchup_display = format_competition(matchup_rows)
+                    print(matchup_display)
+                    continue
+
+                # Check for refresh command
+                if user_input.lower() == 'refresh':
+                    removed = handle_refresh_command(
+                        conn, args.target_dir, eliminated, tournament_pool, locked
+                    )
+                    if removed:
+                        # Survivor Elos changed — re-sync and pull a fresh matchup.
+                        break
                     print(matchup_display)
                     continue
 
@@ -349,9 +371,9 @@ def main():
                         lock_arg = ""
                 except ValueError as exc:
                     if args.knockout:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, add, or reset"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, add, refresh, or reset"))
                     else:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, or rem"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, or refresh"))
                     continue
 
                 handle_game_result(
