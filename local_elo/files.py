@@ -158,7 +158,7 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
 
 def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
                            eliminated: set = None, tournament_pool: set = None,
-                           locked: set = None) -> set:
+                           locked: set = None, confirm: bool = True) -> set:
     """
     Delete DB entries whose file no longer exists on disk, then recalculate
     remaining Elos once so total = (remaining N) x 1000.
@@ -171,7 +171,12 @@ def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
     The current regex pattern is intentionally ignored: a file that exists but
     doesn't match the active filter is still on disk and must not be removed.
 
-    Returns the set of removed file IDs.
+    When ``confirm`` is True (the default for interactive use), the stale
+    entries about to be deleted are listed and the user is prompted to confirm
+    (y/N); answering anything other than yes cancels without changes — this
+    doubles as a dry-run preview. Pass ``confirm=False`` to skip the prompt.
+
+    Returns the set of removed file IDs (empty if nothing stale or cancelled).
     """
     cursor = conn.cursor()
     cursor.execute('SELECT id, path, elo FROM files')
@@ -187,10 +192,26 @@ def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
         print(dim(f"Nothing to refresh — all {len(all_rows)} entries exist on disk."))
         return set()
 
-    total_delta = 0.0
+    total_delta = sum(elo - 1000 for _, _, elo in stale)
+    remaining = len(all_rows) - len(stale)
+    entry_word = "entry" if len(stale) == 1 else "entries"
+
+    # Show exactly what will be deleted before touching anything.
+    print(yellow(f"The following {len(stale)} stale {entry_word} will be deleted:"))
+    for _, path, elo in stale:
+        print(f"  {cyan(path)} {dim(f'(elo {elo:.0f})')}")
+    print(dim(
+        f"Then {total_delta:+.1f} Elo will be redistributed across {remaining} remaining file(s)."
+    ))
+
+    if confirm:
+        answer = input("Proceed? [y/N]: ").strip().lower()
+        if answer not in ('y', 'yes'):
+            print(dim("Refresh cancelled — nothing was deleted."))
+            return set()
+
     removed_ids = set()
     for file_id, path, elo in stale:
-        total_delta += elo - 1000
         remove_entry_from_database(conn, file_id)
         removed_ids.add(file_id)
 
@@ -199,12 +220,9 @@ def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
         if tracking_set is not None:
             tracking_set -= removed_ids
 
-    remaining = len(all_rows) - len(removed_ids)
-
     # Single recalculation pass at the end (one Finder-comment update for all).
     redistribute_elo_delta(conn, total_delta, target_dir=target_dir)
 
-    entry_word = "entry" if len(removed_ids) == 1 else "entries"
     print(
         f"{green('✓')} Removed {bold(str(len(removed_ids)))} stale {entry_word}, "
         f"redistributed {bold(f'{total_delta:+.1f}')} Elo across {remaining} file(s)"
