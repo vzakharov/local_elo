@@ -362,11 +362,24 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
     """
     parts = user_input.split(maxsplit=2)
     if len(parts) != 3:
-        print(yellow("Usage: ren <old_filename> <new_filename>"))
+        print(yellow("Usage: ren <letter|old_filename> <new_filename>"))
         return current_paths
 
-    old_name = parts[1]
+    old_arg = parts[1]
     new_name = parts[2]
+
+    # A single character is treated as an on-screen slot letter (a/b/c/…)
+    # identifying the candidate to rename. Anything longer keeps the original
+    # exact-filename / wildcard behavior.
+    if len(old_arg) == 1:
+        idx = ord(old_arg.lower()) - ord('a')
+        if not 0 <= idx < len(current_paths):
+            valid = "".join(chr(ord('a') + i) for i in range(len(current_paths)))
+            print(red(f"Error: no candidate in slot '{old_arg}'. Use one of: {valid}"))
+            return current_paths
+        old_name = current_paths[idx]
+    else:
+        old_name = old_arg
 
     if '*' in old_name:
         try:
@@ -410,6 +423,10 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
         sync_files(conn, pattern, target_dir)
         return current_paths
     else:
+        # If the new name omits an extension, keep the original file's.
+        if not os.path.splitext(new_name)[1]:
+            new_name += os.path.splitext(old_name)[1]
+
         old_path = os.path.join(target_dir, old_name)
         new_path = os.path.join(target_dir, new_name)
 
