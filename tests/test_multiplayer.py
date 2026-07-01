@@ -10,7 +10,7 @@ from local_elo.elo import (
     calculate_multiplayer_elo_deltas, record_competition, redistribute_elo_delta,
     update_elo_ratings,
 )
-from local_elo.files import handle_refresh_command
+from local_elo.files import handle_refresh_command, handle_rename_command
 from local_elo.knockout import (
     effective_locked, handle_all_locked_unlock, handle_game_result, handle_lock_command
 )
@@ -383,6 +383,88 @@ class RefreshCommandTests(unittest.TestCase):
             cursor.execute("SELECT elo FROM files")
             elos = [row[0] for row in cursor.fetchall()]
             self.assertTrue(all(abs(elo - 1010.0) < 1e-6 for elo in elos))
+
+
+class RenameCommandTests(unittest.TestCase):
+    PATTERN = r".*\.(png|jpg)$"
+
+    def _setup(self, tmp_dir, names):
+        tmp_path = Path(tmp_dir)
+        for name in names:
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        conn = init_db(tmp_dir)
+        for name in names:
+            add_file_to_db(conn, name)
+        return conn
+
+    def _db_paths(self, conn):
+        cursor = conn.cursor()
+        cursor.execute("SELECT path FROM files")
+        return {row[0] for row in cursor.fetchall()}
+
+    def test_letter_keeps_original_extension(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            names = ["foo.png", "bar.png", "baz.png"]
+            conn = self._setup(tmp_dir, names)
+
+            updated = handle_rename_command(
+                conn, "ren a NewName", tmp_dir, self.PATTERN, list(names)
+            )
+
+            self.assertTrue((Path(tmp_dir) / "NewName.png").exists())
+            self.assertFalse((Path(tmp_dir) / "foo.png").exists())
+            self.assertEqual(updated[0], "NewName.png")
+            self.assertIn("NewName.png", self._db_paths(conn))
+
+    def test_letter_with_explicit_extension(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            names = ["foo.png", "bar.png"]
+            conn = self._setup(tmp_dir, names)
+
+            updated = handle_rename_command(
+                conn, "ren b NewName.jpg", tmp_dir, self.PATTERN, list(names)
+            )
+
+            self.assertTrue((Path(tmp_dir) / "NewName.jpg").exists())
+            self.assertEqual(updated[1], "NewName.jpg")
+
+    def test_exact_filename_infers_extension(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            names = ["foo.png", "bar.png"]
+            conn = self._setup(tmp_dir, names)
+
+            updated = handle_rename_command(
+                conn, "ren foo.png renamed", tmp_dir, self.PATTERN, list(names)
+            )
+
+            self.assertTrue((Path(tmp_dir) / "renamed.png").exists())
+            self.assertEqual(updated[0], "renamed.png")
+
+    def test_wildcard_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            names = ["one.png", "two.png"]
+            conn = self._setup(tmp_dir, names)
+
+            handle_rename_command(
+                conn, "ren *.png *.jpg", tmp_dir, self.PATTERN, list(names)
+            )
+
+            self.assertTrue((Path(tmp_dir) / "one.jpg").exists())
+            self.assertTrue((Path(tmp_dir) / "two.jpg").exists())
+            self.assertFalse((Path(tmp_dir) / "one.png").exists())
+
+    def test_out_of_range_letter_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            names = ["foo.png", "bar.png"]
+            conn = self._setup(tmp_dir, names)
+
+            updated = handle_rename_command(
+                conn, "ren z x", tmp_dir, self.PATTERN, list(names)
+            )
+
+            self.assertEqual(updated, names)
+            self.assertEqual(self._db_paths(conn), set(names))
+            self.assertTrue((Path(tmp_dir) / "foo.png").exists())
 
 
 if __name__ == "__main__":

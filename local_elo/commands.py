@@ -271,11 +271,11 @@ def main():
                 slot_hint = "".join(slots)
                 if args.knockout:
                     user_input = input(
-                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <old> <new>/rem <slots>/add <name>/refresh/reset): "
+                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <letter|old> <new>/rem <slots>/add <name>/refresh/reset): "
                     ).strip()
                 else:
                     user_input = input(
-                        f"Your choice ({slot_hint}/t/o/top [N]/ren <old> <new>/rem <slots>/refresh): "
+                        f"Your choice ({slot_hint}/t/o/top [N]/ren <letter|old> <new>/rem <slots>/refresh): "
                     ).strip()
 
                 # Check for top command
