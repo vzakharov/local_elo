@@ -249,37 +249,27 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(dim("Press Ctrl+C to exit\n"))
 
 
-def format_competition(competitors: List[Tuple[str, str, float, int, str, List[str]]]) -> str:
+def format_competition(competitors: List[Tuple[str, str, float, int, str, List[str]]],
+                       tag_colors: dict = None) -> str:
     """Format a multiplayer competition block with slot letters.
 
     Each competitor tuple is (slot, display_path, elo, rank, record, tags),
     where tags is a list of strings displayed under the competitor when present.
+
+    ``tag_colors`` maps a tag to its palette index (see db.get_tag_color_map),
+    giving every tag a stable color across the session. Tags absent from the map
+    fall back to dimmed text.
     """
     if not competitors:
         return ""
 
-    # Assign a distinct color to each tag that DIFFERS across the match — i.e.
-    # tags not carried by every competitor. Tags common to all competitors stay
-    # neutral (dimmed) since they don't distinguish anyone. Colors are assigned
-    # in first-appearance order and cycle through the palette when exhausted.
-    player_count = len(competitors)
-    tag_order = []
-    tag_counts = {}
-    for _, _, _, _, _, tags in competitors:
-        for tag in tags:
-            if tag not in tag_counts:
-                tag_counts[tag] = 0
-                tag_order.append(tag)
-            tag_counts[tag] += 1
-    tag_color_index = {}
-    for tag in tag_order:
-        if tag_counts[tag] < player_count:
-            tag_color_index[tag] = len(tag_color_index)
+    tag_colors = tag_colors or {}
 
     def render_tag(tag):
-        if tag in tag_color_index:
-            return tag_color(tag_color_index[tag], f"#{tag}")
-        return dim(f"#{tag}")
+        idx = tag_colors.get(tag)
+        if idx is None:
+            return dim(f"#{tag}")
+        return tag_color(idx, f"#{tag}")
 
     strongest_slot = max(competitors, key=lambda c: c[2])[0]
     lines = [bold("Competition:")]

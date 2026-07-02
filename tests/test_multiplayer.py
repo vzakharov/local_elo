@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import os
 
-from local_elo.db import add_file_to_db, add_tags, get_tags, init_db, load_round_played, load_locked
+from local_elo.db import add_file_to_db, add_tags, get_tags, get_tag_color_map, init_db, load_round_played, load_locked
 from local_elo.elo import (
     calculate_multiplayer_elo_deltas, record_competition, redistribute_elo_delta,
     update_elo_ratings,
@@ -589,40 +589,74 @@ class TagColoringTests(unittest.TestCase):
     def _competitor(slot, tags, elo=1000):
         return (slot, f"{slot}.txt", elo, 1, "0W-0L-0T", tags)
 
-    def test_common_tags_dim_and_differing_tags_colored(self):
+    def _seed(self, tmp_dir, names):
+        tmp_path = Path(tmp_dir)
+        for name in names:
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        conn = init_db(tmp_dir)
+        for name in names:
+            add_file_to_db(conn, name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM files ORDER BY path")
+        return conn, [row[0] for row in cursor.fetchall()]
+
+    def test_format_competition_uses_provided_color_map(self):
         import local_elo.colors as colors
         from local_elo.colors import Style, TAG_PALETTE
         from local_elo.ui import format_competition
 
+        tag_colors = {"alpha": 0, "beta": 3}
         with patch.object(colors, "COLORS_ENABLED", True):
-            out = format_competition([
-                self._competitor("a", ["shared", "onlyA"]),
-                self._competitor("b", ["shared", "onlyB"]),
-            ])
+            out = format_competition(
+                [self._competitor("a", ["alpha", "beta", "unmapped"])],
+                tag_colors,
+            )
 
-        # 'shared' is on every competitor -> dimmed, no palette color.
-        self.assertIn(f"{Style.DIM}#shared", out)
-        # Differing tags get palette colors in first-appearance order.
-        self.assertIn(f"{TAG_PALETTE[0]}#onlyA", out)
-        self.assertIn(f"{TAG_PALETTE[1]}#onlyB", out)
+        self.assertIn(f"{TAG_PALETTE[0]}#alpha", out)
+        self.assertIn(f"{TAG_PALETTE[3]}#beta", out)
+        # A tag absent from the map falls back to dimmed text.
+        self.assertIn(f"{Style.DIM}#unmapped", out)
 
-    def test_same_differing_tag_shares_color_across_players(self):
-        import local_elo.colors as colors
-        from local_elo.colors import TAG_PALETTE
-        from local_elo.ui import format_competition
+    def test_color_map_orders_by_earliest_timestamp_and_is_stable(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, ids = self._seed(tmp_dir, ["a.txt", "b.txt"])
+            cur = conn.cursor()
+            # Insert tags out of alphabetical order with explicit timestamps.
+            cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                        (ids[0], "zebra", "2020-01-01 00:00:00"))
+            cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                        (ids[0], "mango", "2019-01-01 00:00:00"))
+            cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                        (ids[0], "apple", "2021-01-01 00:00:00"))
+            conn.commit()
 
-        with patch.object(colors, "COLORS_ENABLED", True):
-            out = format_competition([
-                self._competitor("a", ["x"]),
-                self._competitor("b", ["x", "y"]),
-                self._competitor("c", ["y"]),
-            ])
+            self.assertEqual(get_tag_color_map(conn),
+                             {"mango": 0, "zebra": 1, "apple": 2})
 
-        # x (on a,b) and y (on b,c) each differ from the full set of 3 players.
-        # x appears first -> palette[0]; y second -> palette[1]. x under both
-        # a and b must share the same color.
-        self.assertEqual(out.count(f"{TAG_PALETTE[0]}#x"), 2)
-        self.assertEqual(out.count(f"{TAG_PALETTE[1]}#y"), 2)
+            # Re-applying an existing tag later (and adding a brand-new one)
+            # must not shift existing indices: MIN(timestamp) is unchanged and
+            # the new tag simply appends at the end.
+            cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                        (ids[1], "mango", "2022-01-01 00:00:00"))
+            cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                        (ids[1], "kiwi", "2023-01-01 00:00:00"))
+            conn.commit()
+
+            self.assertEqual(get_tag_color_map(conn),
+                             {"mango": 0, "zebra": 1, "apple": 2, "kiwi": 3})
+
+    def test_color_map_breaks_timestamp_ties_alphabetically(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, ids = self._seed(tmp_dir, ["a.txt"])
+            cur = conn.cursor()
+            # Tags applied together share a timestamp -> order alphabetically.
+            for tag in ["delta", "bravo", "charlie", "alpha"]:
+                cur.execute("INSERT INTO file_tags (file_id, tag, timestamp) VALUES (?,?,?)",
+                            (ids[0], tag, "2020-01-01 00:00:00"))
+            conn.commit()
+
+            self.assertEqual(get_tag_color_map(conn),
+                             {"alpha": 0, "bravo": 1, "charlie": 2, "delta": 3})
 
 
 if __name__ == "__main__":
