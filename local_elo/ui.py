@@ -233,7 +233,9 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool {bold_red('(KNOCKOUT MODE)')}")
         print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')} / {bold('ac!e!')}, "
               f"{bold('t')} (tie+all pass), {bold('o')} (open shown files), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('tag')} <letter> <tags...>, {bold('add')} <name>, {bold('reset')}")
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, "
+              f"{bold('tag')} <letter> <±tags> / {bold('tag ren')} <old> <new> / {bold('tag rem')} <tag>, "
+              f"{bold('add')} <name>, {bold('reset')}")
         print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(yellow("Note: Losers are eliminated! Last one standing wins."))
         print(dim("Press Ctrl+C to exit\n"))
@@ -241,7 +243,8 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool")
         print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')}, "
               f"{bold('t')} (all tie), {bold('o')} (open shown files), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('tag')} <letter> <tags...>")
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, "
+              f"{bold('tag')} <letter> <±tags> / {bold('tag ren')} <old> <new> / {bold('tag rem')} <tag>")
         print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(dim("Press Ctrl+C to exit\n"))
 

@@ -167,6 +167,57 @@ def get_tags(conn: sqlite3.Connection, file_id: int) -> List[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
+def remove_tags(conn: sqlite3.Connection, file_id: int, tags: List[str]) -> List[str]:
+    """Remove tags from a file, returning the list of tags that were removed.
+
+    Tags not present on the file are silently skipped. Matching is exact
+    (case-sensitive), consistent with how tags are stored.
+    """
+    cursor = conn.cursor()
+    removed = []
+    for tag in tags:
+        cursor.execute(
+            'DELETE FROM file_tags WHERE file_id = ? AND tag = ?',
+            (file_id, tag)
+        )
+        if cursor.rowcount > 0:
+            removed.append(tag)
+    conn.commit()
+    return removed
+
+
+def count_files_with_tag(conn: sqlite3.Connection, tag: str) -> int:
+    """Return how many files currently carry the given tag."""
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM file_tags WHERE tag = ?', (tag,))
+    return cursor.fetchone()[0]
+
+
+def rename_tag(conn: sqlite3.Connection, old: str, new: str) -> int:
+    """Rename a tag across every file, returning the number of files affected.
+
+    Files that already carry ``new`` are merged (the duplicate ``old`` row is
+    dropped rather than causing a primary-key collision).
+    """
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM file_tags WHERE tag = ?', (old,))
+    affected = cursor.fetchone()[0]
+    # UPDATE OR IGNORE renames rows; where (file_id, new) already exists the
+    # update is skipped, leaving the old row to be cleaned up by the DELETE.
+    cursor.execute('UPDATE OR IGNORE file_tags SET tag = ? WHERE tag = ?', (new, old))
+    cursor.execute('DELETE FROM file_tags WHERE tag = ?', (old,))
+    conn.commit()
+    return affected
+
+
+def remove_tag_everywhere(conn: sqlite3.Connection, tag: str) -> int:
+    """Remove a tag from every file, returning the number of files affected."""
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM file_tags WHERE tag = ?', (tag,))
+    conn.commit()
+    return cursor.rowcount
+
+
 def load_knockout_state(conn: sqlite3.Connection) -> set:
     """Load eliminated file IDs from database."""
     cursor = conn.cursor()

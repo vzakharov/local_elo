@@ -514,6 +514,75 @@ class TagCommandTests(unittest.TestCase):
             self.assertEqual(get_tags(conn, competitors[0][0]), [])
             self.assertEqual(get_tags(conn, competitors[1][0]), [])
 
+    def test_remove_tags_from_slot(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            file_id = competitors[0][0]
+            add_tags(conn, file_id, ["keep", "drop"])
+
+            # Mixed add + remove in one command.
+            handle_tag_command(conn, "a add -drop", competitors)
+
+            self.assertEqual(sorted(get_tags(conn, file_id)), ["add", "keep"])
+
+    def test_global_rename_tag(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            add_tags(conn, competitors[0][0], ["old"])
+            add_tags(conn, competitors[1][0], ["old"])
+
+            handle_tag_command(conn, "ren old new", competitors)
+
+            self.assertEqual(get_tags(conn, competitors[0][0]), ["new"])
+            self.assertEqual(get_tags(conn, competitors[1][0]), ["new"])
+
+    def test_global_rename_merges_into_existing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            # File a has both old and new -> renaming must merge, not collide.
+            add_tags(conn, competitors[0][0], ["old", "new"])
+            add_tags(conn, competitors[1][0], ["old"])
+
+            handle_tag_command(conn, "ren old new", competitors, confirm=False)
+
+            self.assertEqual(get_tags(conn, competitors[0][0]), ["new"])
+            self.assertEqual(get_tags(conn, competitors[1][0]), ["new"])
+
+    def test_global_rename_merge_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            add_tags(conn, competitors[0][0], ["old"])
+            add_tags(conn, competitors[1][0], ["new"])
+
+            with patch("builtins.input", return_value="n"):
+                handle_tag_command(conn, "ren old new", competitors)
+
+            # Declined -> nothing changed.
+            self.assertEqual(get_tags(conn, competitors[0][0]), ["old"])
+            self.assertEqual(get_tags(conn, competitors[1][0]), ["new"])
+
+    def test_global_remove_tag_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            add_tags(conn, competitors[0][0], ["gone", "stay"])
+            add_tags(conn, competitors[1][0], ["gone"])
+
+            with patch("builtins.input", return_value="y"):
+                handle_tag_command(conn, "rem gone", competitors)
+
+            self.assertEqual(get_tags(conn, competitors[0][0]), ["stay"])
+            self.assertEqual(get_tags(conn, competitors[1][0]), [])
+
+    def test_global_remove_tag_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            add_tags(conn, competitors[0][0], ["gone"])
+
+            with patch("builtins.input", return_value="n"):
+                handle_tag_command(conn, "rem gone", competitors)
+
+            self.assertEqual(get_tags(conn, competitors[0][0]), ["gone"])
+
 
 if __name__ == "__main__":
     unittest.main()
