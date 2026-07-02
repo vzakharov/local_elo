@@ -8,7 +8,7 @@ import sqlite3
 from typing import List, Tuple, Optional
 
 from .constants import DB_NAME
-from .db import add_file_to_db, remove_entry_from_database, remove_elimination
+from .db import add_file_to_db, remove_entry_from_database, remove_elimination, add_tags
 from .elo import redistribute_elo_delta
 from .colors import green, red, yellow, cyan, bold, dim
 from .utils import get_filename, display_name
@@ -154,6 +154,41 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
         print(f"{green('✓')} Removed {cyan(file_path)} and redistributed {bold(f'{delta:+.1f}')} Elo")
 
     return True
+
+
+def handle_tag_command(conn: sqlite3.Connection, arg: str,
+                       competitors: List[Tuple[int, str]]) -> None:
+    """
+    Apply one or more tags to a competitor selected by slot letter, e.g.
+    'a foo bar baz' tags the file in slot A with foo, bar and baz.
+
+    Tags are stored case-preserving; only the leading slot letter is lowercased.
+    """
+    valid_slots = {chr(ord('a') + idx): (file_id, path) for idx, (file_id, path) in enumerate(competitors)}
+
+    parts = arg.split()
+    if len(parts) < 2:
+        printable = "".join(valid_slots.keys())
+        print(red(f"  Invalid tag command. Usage: tag <slot> <tag1> [tag2 ...] (slots: {printable})"))
+        return
+
+    slot = parts[0].lower()
+    tags = parts[1:]
+    if slot not in valid_slots:
+        printable = "".join(valid_slots.keys())
+        print(red(f"  Invalid slot: '{slot}'. Use one of: {printable}"))
+        return
+
+    file_id, file_path = valid_slots[slot]
+    disp = display_name(file_path)
+
+    added = add_tags(conn, file_id, tags)
+    already = [tag for tag in tags if tag not in added]
+
+    if added:
+        print(f"{green('✓')} Tagged {cyan(disp)}: {', '.join(added)}")
+    if already:
+        print(dim(f"  Already tagged: {', '.join(already)}"))
 
 
 def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',

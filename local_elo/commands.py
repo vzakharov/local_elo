@@ -3,8 +3,8 @@ import sys
 import os
 import argparse
 
-from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info
-from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, handle_refresh_command, sync_files
+from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info, get_tags
+from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, handle_refresh_command, handle_tag_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_competition
 from .game import select_match_players
 from .knockout import (
@@ -252,17 +252,22 @@ def main():
             # Get current rankings
             current_rankings = get_rankings(conn)
             slots = slot_letters(len(competition_players))
-            matchup_rows = []
-            for idx, player in enumerate(competition_players):
-                player_id, path, elo, _, _, _ = player
-                matchup_rows.append((
-                    slots[idx],
-                    display_name(path),
-                    elo,
-                    current_rankings.get(player_id, "?"),
-                    format_record(player),
-                ))
 
+            def build_matchup_rows(players):
+                rows = []
+                for idx, player in enumerate(players):
+                    player_id, path, elo, _, _, _ = player
+                    rows.append((
+                        slots[idx],
+                        display_name(path),
+                        elo,
+                        current_rankings.get(player_id, "?"),
+                        format_record(player),
+                        get_tags(conn, player_id),
+                    ))
+                return rows
+
+            matchup_rows = build_matchup_rows(competition_players)
             matchup_display = format_competition(matchup_rows)
             print(matchup_display)
 
@@ -271,11 +276,11 @@ def main():
                 slot_hint = "".join(slots)
                 if args.knockout:
                     user_input = input(
-                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <letter|old> <new>/rem <slots>/add <name>/refresh/reset): "
+                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <tags...>/add <name>/refresh/reset): "
                     ).strip()
                 else:
                     user_input = input(
-                        f"Your choice ({slot_hint}/t/o/top [N]/ren <letter|old> <new>/rem <slots>/refresh): "
+                        f"Your choice ({slot_hint}/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <tags...>/refresh): "
                     ).strip()
 
                 # Check for top command
@@ -304,16 +309,7 @@ def main():
                         (player[0], updated_paths[idx], player[2], player[3], player[4], player[5])
                         for idx, player in enumerate(competition_players)
                     ]
-                    matchup_rows = []
-                    for idx, player in enumerate(competition_players):
-                        player_id, path, elo, _, _, _ = player
-                        matchup_rows.append((
-                            slots[idx],
-                            display_name(path),
-                            elo,
-                            current_rankings.get(player_id, "?"),
-                            format_record(player),
-                        ))
+                    matchup_rows = build_matchup_rows(competition_players)
                     matchup_display = format_competition(matchup_rows)
                     print(matchup_display)
                     continue
@@ -356,6 +352,17 @@ def main():
                         break
                     continue
 
+                # Check for tag command
+                if user_input.lower().startswith('tag '):
+                    arg = user_input[4:].strip()
+                    visible_competitors = [(player[0], player[1]) for player in competition_players]
+                    handle_tag_command(conn, arg, visible_competitors)
+                    # Tags changed — rebuild the matchup block so they show immediately.
+                    matchup_rows = build_matchup_rows(competition_players)
+                    matchup_display = format_competition(matchup_rows)
+                    print(matchup_display)
+                    continue
+
                 # Check for knockout-only pass modifiers
                 lowered = user_input.strip().lower()
                 if not args.knockout and (lowered.endswith('+') or lowered.endswith('-')):
@@ -371,9 +378,9 @@ def main():
                         lock_arg = ""
                 except ValueError as exc:
                     if args.knockout:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, add, refresh, or reset"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, tag, add, refresh, or reset"))
                     else:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, or refresh"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, tag, or refresh"))
                     continue
 
                 handle_game_result(
