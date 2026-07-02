@@ -6,7 +6,7 @@ from typing import List, Optional, Sequence, Tuple
 from .constants import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
 from .colors import (
-    green, red, yellow, cyan, blue, dim, bold, bold_cyan, bold_red,
+    green, red, yellow, cyan, dim, bold, bold_cyan, bold_red,
     prob_color, histogram_bar
 )
 from .utils import display_name
@@ -261,7 +261,7 @@ def format_competition(competitors: List[Tuple[str, str, float, int, str, List[s
         name = bold(display_path) if slot == strongest_slot else display_path
         lines.append(f"  {bold(slot)}: {name} ({int(elo)} / #{rank} / {record})")
         if tags:
-            tag_str = " ".join(blue(f"#{tag}") for tag in tags)
+            tag_str = " ".join(cyan(f"#{tag}") for tag in tags)
             lines.append(f"     {tag_str}")
 
     lines.append(dim("Command: slots for winners (e.g. ac), 't' for tie-all, '+' all pass, '-' winners do not pass"))
