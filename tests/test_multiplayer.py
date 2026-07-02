@@ -5,12 +5,12 @@ from unittest.mock import patch
 
 import os
 
-from local_elo.db import add_file_to_db, init_db, load_round_played, load_locked
+from local_elo.db import add_file_to_db, add_tags, get_tags, init_db, load_round_played, load_locked
 from local_elo.elo import (
     calculate_multiplayer_elo_deltas, record_competition, redistribute_elo_delta,
     update_elo_ratings,
 )
-from local_elo.files import handle_refresh_command, handle_rename_command
+from local_elo.files import handle_refresh_command, handle_rename_command, handle_tag_command
 from local_elo.knockout import (
     effective_locked, handle_all_locked_unlock, handle_game_result, handle_lock_command
 )
@@ -465,6 +465,54 @@ class RenameCommandTests(unittest.TestCase):
             self.assertEqual(updated, names)
             self.assertEqual(self._db_paths(conn), set(names))
             self.assertTrue((Path(tmp_dir) / "foo.png").exists())
+
+
+class TagCommandTests(unittest.TestCase):
+    def _setup(self, tmp_dir, names):
+        tmp_path = Path(tmp_dir)
+        for name in names:
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        conn = init_db(tmp_dir)
+        for name in names:
+            add_file_to_db(conn, name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, path FROM files ORDER BY path")
+        return conn, cursor.fetchall()
+
+    def test_add_tags_returns_new_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+            file_id = competitors[0][0]
+
+            added = add_tags(conn, file_id, ["alpha", "beta"])
+            self.assertEqual(added, ["alpha", "beta"])
+
+            # Re-applying an overlapping set only reports the genuinely new tag.
+            added_again = add_tags(conn, file_id, ["beta", "gamma"])
+            self.assertEqual(added_again, ["gamma"])
+
+            self.assertEqual(get_tags(conn, file_id), ["alpha", "beta", "gamma"])
+            # Other files are unaffected.
+            self.assertEqual(get_tags(conn, competitors[1][0]), [])
+
+    def test_handle_tag_command_tags_selected_slot(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt", "c.txt"])
+
+            handle_tag_command(conn, "b Foo Bar", competitors)
+
+            self.assertEqual(sorted(get_tags(conn, competitors[1][0])), ["Bar", "Foo"])
+            self.assertEqual(get_tags(conn, competitors[0][0]), [])
+
+    def test_handle_tag_command_invalid_slot_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, competitors = self._setup(tmp_dir, ["a.txt", "b.txt"])
+
+            handle_tag_command(conn, "z oops", competitors)
+            handle_tag_command(conn, "a", competitors)  # missing tag
+
+            self.assertEqual(get_tags(conn, competitors[0][0]), [])
+            self.assertEqual(get_tags(conn, competitors[1][0]), [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import List, Optional, Sequence, Tuple
 from .constants import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
 from .colors import (
-    green, red, yellow, cyan, dim, bold, bold_cyan, bold_red,
+    green, red, yellow, cyan, blue, dim, bold, bold_cyan, bold_red,
     prob_color, histogram_bar
 )
 from .utils import display_name
@@ -233,7 +233,7 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool {bold_red('(KNOCKOUT MODE)')}")
         print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')} / {bold('ac!e!')}, "
               f"{bold('t')} (tie+all pass), {bold('o')} (open shown files), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('add')} <name>, {bold('reset')}")
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('tag')} <letter> <tags...>, {bold('add')} <name>, {bold('reset')}")
         print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(yellow("Note: Losers are eliminated! Last one standing wins."))
         print(dim("Press Ctrl+C to exit\n"))
@@ -241,21 +241,28 @@ def display_welcome_message(knockout_mode: bool) -> None:
         print(f"{bold_cyan('Local Elo')} - File Ranking Tool")
         print(f"Commands: winner slots {bold('abc')} / {bold('abc+')} / {bold('abc-')}, "
               f"{bold('t')} (all tie), {bold('o')} (open shown files), "
-              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>")
+              f"{bold('top')} [N], {bold('ren')} <old> <new>, {bold('rem')} <slots>, {bold('tag')} <letter> <tags...>")
         print(dim("Legacy aliases for 2-player rounds are still accepted (A/B/T and +/- variants)."))
         print(dim("Press Ctrl+C to exit\n"))
 
 
-def format_competition(competitors: List[Tuple[str, str, float, int, str]]) -> str:
-    """Format a multiplayer competition block with slot letters."""
+def format_competition(competitors: List[Tuple[str, str, float, int, str, List[str]]]) -> str:
+    """Format a multiplayer competition block with slot letters.
+
+    Each competitor tuple is (slot, display_path, elo, rank, record, tags),
+    where tags is a list of strings displayed under the competitor when present.
+    """
     if not competitors:
         return ""
 
     strongest_slot = max(competitors, key=lambda c: c[2])[0]
     lines = [bold("Competition:")]
-    for slot, display_path, elo, rank, record in competitors:
+    for slot, display_path, elo, rank, record, tags in competitors:
         name = bold(display_path) if slot == strongest_slot else display_path
         lines.append(f"  {bold(slot)}: {name} ({int(elo)} / #{rank} / {record})")
+        if tags:
+            tag_str = " ".join(blue(f"#{tag}") for tag in tags)
+            lines.append(f"     {tag_str}")
 
     lines.append(dim("Command: slots for winners (e.g. ac), 't' for tie-all, '+' all pass, '-' winners do not pass"))
     return "\n".join(lines)

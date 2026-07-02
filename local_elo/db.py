@@ -62,6 +62,17 @@ def init_db(target_dir: str = '.') -> sqlite3.Connection:
         )
     ''')
 
+    # Create file_tags table (free-form tags applied to a file/player)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS file_tags (
+            file_id INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (file_id, tag),
+            FOREIGN KEY (file_id) REFERENCES files(id)
+        )
+    ''')
+
     # Create knockout_state table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS knockout_state (
@@ -125,6 +136,35 @@ def add_file_to_db(conn: sqlite3.Connection, filepath: str) -> None:
     except sqlite3.IntegrityError:
         # File already exists in database
         pass
+
+
+def add_tags(conn: sqlite3.Connection, file_id: int, tags: List[str]) -> List[str]:
+    """Apply tags to a file, returning the list of tags that were newly added.
+
+    Re-applying an existing tag is a no-op (idempotent via the composite
+    primary key). Tag text is stored exactly as provided (case-preserving).
+    """
+    cursor = conn.cursor()
+    added = []
+    for tag in tags:
+        cursor.execute(
+            'INSERT OR IGNORE INTO file_tags (file_id, tag) VALUES (?, ?)',
+            (file_id, tag)
+        )
+        if cursor.rowcount > 0:
+            added.append(tag)
+    conn.commit()
+    return added
+
+
+def get_tags(conn: sqlite3.Connection, file_id: int) -> List[str]:
+    """Return a file's tags, ordered by when they were applied."""
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT tag FROM file_tags WHERE file_id = ? ORDER BY timestamp, tag',
+        (file_id,)
+    )
+    return [row[0] for row in cursor.fetchall()]
 
 
 def load_knockout_state(conn: sqlite3.Connection) -> set:
@@ -288,6 +328,7 @@ def remove_entry_from_database(conn: sqlite3.Connection, file_id: int) -> None:
     cursor.execute('DELETE FROM knockout_pool WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM knockout_round_played WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM knockout_locked WHERE file_id = ?', (file_id,))
+    cursor.execute('DELETE FROM file_tags WHERE file_id = ?', (file_id,))
     cursor.execute('DELETE FROM games WHERE file_a_id = ? OR file_b_id = ?',
                    (file_id, file_id))
     cursor.execute('SELECT DISTINCT match_id FROM match_players WHERE file_id = ?', (file_id,))
