@@ -3,7 +3,7 @@ import sys
 import os
 import argparse
 
-from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info, get_tags
+from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info, get_tags, get_tag_color_map
 from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, handle_refresh_command, handle_tag_command, sync_files
 from .ui import display_leaderboard, format_record, parse_top_command, display_welcome_message, format_competition
 from .game import select_match_players
@@ -267,8 +267,12 @@ def main():
                     ))
                 return rows
 
-            matchup_rows = build_matchup_rows(competition_players)
-            matchup_display = format_competition(matchup_rows)
+            def render_matchup(players):
+                # Recompute the tag color map each render so tags applied this
+                # session pick up their (stable, timestamp-ordered) color.
+                return format_competition(build_matchup_rows(players), get_tag_color_map(conn))
+
+            matchup_display = render_matchup(competition_players)
             print(matchup_display)
 
             # Get user input
@@ -309,8 +313,7 @@ def main():
                         (player[0], updated_paths[idx], player[2], player[3], player[4], player[5])
                         for idx, player in enumerate(competition_players)
                     ]
-                    matchup_rows = build_matchup_rows(competition_players)
-                    matchup_display = format_competition(matchup_rows)
+                    matchup_display = render_matchup(competition_players)
                     print(matchup_display)
                     continue
 
@@ -358,8 +361,7 @@ def main():
                     visible_competitors = [(player[0], player[1]) for player in competition_players]
                     handle_tag_command(conn, arg, visible_competitors)
                     # Tags changed — rebuild the matchup block so they show immediately.
-                    matchup_rows = build_matchup_rows(competition_players)
-                    matchup_display = format_competition(matchup_rows)
+                    matchup_display = render_matchup(competition_players)
                     print(matchup_display)
                     continue
 

@@ -167,6 +167,21 @@ def get_tags(conn: sqlite3.Connection, file_id: int) -> List[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
+def get_tag_color_map(conn: sqlite3.Connection) -> dict:
+    """Return a stable {tag: color_index} map for all tags in the database.
+
+    Tags are ordered by the earliest time each was applied (ties broken by tag
+    name), so a given tag keeps the same index — and therefore the same
+    color — across runs. Applying a brand-new tag appends it at the end without
+    shifting the indices of existing tags.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT tag FROM file_tags GROUP BY tag ORDER BY MIN(timestamp), tag'
+    )
+    return {row[0]: idx for idx, row in enumerate(cursor.fetchall())}
+
+
 def remove_tags(conn: sqlite3.Connection, file_id: int, tags: List[str]) -> List[str]:
     """Remove tags from a file, returning the list of tags that were removed.
 
