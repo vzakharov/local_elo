@@ -8,7 +8,10 @@ import sqlite3
 from typing import List, Tuple, Optional
 
 from .constants import DB_NAME
-from .db import add_file_to_db, remove_entry_from_database, remove_elimination, add_tags
+from .db import (
+    add_file_to_db, remove_entry_from_database, remove_elimination,
+    add_tags, remove_tags, count_files_with_tag, rename_tag, remove_tag_everywhere,
+)
 from .elo import redistribute_elo_delta
 from .colors import green, red, yellow, cyan, bold, dim
 from .utils import get_filename, display_name
@@ -157,38 +160,108 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
 
 
 def handle_tag_command(conn: sqlite3.Connection, arg: str,
-                       competitors: List[Tuple[int, str]]) -> None:
+                       competitors: List[Tuple[int, str]], confirm: bool = True) -> None:
     """
-    Apply one or more tags to a competitor selected by slot letter, e.g.
-    'a foo bar baz' tags the file in slot A with foo, bar and baz.
+    Manage tags. Supported forms:
+
+      tag <slot> <tag> [tag ...]   apply tags to the file in a slot
+      tag <slot> -<tag> [...]      remove tags from the file in a slot
+                                   (adds and removals may be mixed)
+      tag ren <old> <new>          rename a tag globally (across all files)
+      tag rem <tag>                remove a tag globally (with confirmation)
 
     Tags are stored case-preserving; only the leading slot letter is lowercased.
     """
     valid_slots = {chr(ord('a') + idx): (file_id, path) for idx, (file_id, path) in enumerate(competitors)}
 
     parts = arg.split()
-    if len(parts) < 2:
-        printable = "".join(valid_slots.keys())
-        print(red(f"  Invalid tag command. Usage: tag <slot> <tag1> [tag2 ...] (slots: {printable})"))
+    if not parts:
+        _print_tag_usage(valid_slots)
         return
 
-    slot = parts[0].lower()
-    tags = parts[1:]
+    sub = parts[0].lower()
+
+    # Global rename: tag ren <old> <new>
+    if sub == 'ren':
+        if len(parts) != 3:
+            print(red("  Usage: tag ren <old> <new>"))
+            return
+        old, new = parts[1], parts[2]
+        if count_files_with_tag(conn, old) == 0:
+            print(dim(f"  No files tagged '{old}'."))
+            return
+        # If 'new' already exists, renaming merges the two tags — confirm first.
+        existing_new = count_files_with_tag(conn, new)
+        if existing_new and confirm:
+            answer = input(
+                f"Tag '{new}' already exists on {existing_new} file(s). "
+                f"Merge '{old}' into '{new}'? [y/N]: "
+            ).strip().lower()
+            if answer not in ('y', 'yes'):
+                print(dim("  Cancelled — tag not renamed."))
+                return
+        affected = rename_tag(conn, old, new)
+        verb = "Merged" if existing_new else "Renamed"
+        print(f"{green('✓')} {verb} tag {cyan('#' + old)} → {cyan('#' + new)} across {affected} file(s)")
+        return
+
+    # Global removal: tag rem <tag>
+    if sub == 'rem':
+        if len(parts) != 2:
+            print(red("  Usage: tag rem <tag>"))
+            return
+        tag = parts[1]
+        count = count_files_with_tag(conn, tag)
+        if count == 0:
+            print(dim(f"  No files tagged '{tag}'."))
+            return
+        if confirm:
+            answer = input(f"Remove tag '{tag}' from {count} file(s)? [y/N]: ").strip().lower()
+            if answer not in ('y', 'yes'):
+                print(dim("  Cancelled — no tags removed."))
+                return
+        removed_count = remove_tag_everywhere(conn, tag)
+        print(f"{green('✓')} Removed tag {cyan('#' + tag)} from {removed_count} file(s)")
+        return
+
+    # Per-file add/remove: tag <slot> <tag> / -<tag> ...
+    slot = sub
     if slot not in valid_slots:
         printable = "".join(valid_slots.keys())
         print(red(f"  Invalid slot: '{slot}'. Use one of: {printable}"))
         return
 
+    tokens = parts[1:]
+    to_add = [t for t in tokens if not t.startswith('-')]
+    to_remove = [t[1:] for t in tokens if t.startswith('-') and len(t) > 1]
+    if not to_add and not to_remove:
+        _print_tag_usage(valid_slots)
+        return
+
     file_id, file_path = valid_slots[slot]
     disp = display_name(file_path)
 
-    added = add_tags(conn, file_id, tags)
-    already = [tag for tag in tags if tag not in added]
+    added = add_tags(conn, file_id, to_add) if to_add else []
+    removed = remove_tags(conn, file_id, to_remove) if to_remove else []
+    already = [tag for tag in to_add if tag not in added]
+    not_present = [tag for tag in to_remove if tag not in removed]
 
     if added:
         print(f"{green('✓')} Tagged {cyan(disp)}: {', '.join(added)}")
+    if removed:
+        print(f"{green('✓')} Untagged {cyan(disp)}: {', '.join(removed)}")
     if already:
         print(dim(f"  Already tagged: {', '.join(already)}"))
+    if not_present:
+        print(dim(f"  Not tagged: {', '.join(not_present)}"))
+
+
+def _print_tag_usage(valid_slots: dict) -> None:
+    printable = "".join(valid_slots.keys())
+    print(red(
+        f"  Usage: tag <slot> <tag ...> | tag <slot> -<tag> | tag ren <old> <new> | "
+        f"tag rem <tag> (slots: {printable})"
+    ))
 
 
 def handle_refresh_command(conn: sqlite3.Connection, target_dir: str = '.',
