@@ -37,8 +37,21 @@ class Fg:
     GREEN = '\033[32m'
     YELLOW = '\033[33m'
     BLUE = '\033[34m'
+    MAGENTA = '\033[35m'
     CYAN = '\033[36m'
     BRIGHT_GREEN = '\033[92m'
+    BRIGHT_YELLOW = '\033[93m'
+    BRIGHT_BLUE = '\033[94m'
+    BRIGHT_MAGENTA = '\033[95m'
+    BRIGHT_CYAN = '\033[96m'
+
+
+# Palette used to color tags that distinguish competitors in a match. Chosen for
+# distinctness; cycles when a match has more differing tags than colors.
+TAG_PALETTE = [
+    Fg.CYAN, Fg.YELLOW, Fg.MAGENTA, Fg.GREEN, Fg.BLUE,
+    Fg.BRIGHT_CYAN, Fg.BRIGHT_YELLOW, Fg.BRIGHT_MAGENTA, Fg.BRIGHT_GREEN, Fg.BRIGHT_BLUE,
+]
 
 
 def _apply(code: str, text: str) -> str:
@@ -66,6 +79,11 @@ def yellow(text: str) -> str:
 def cyan(text: str) -> str:
     """Cyan text - for headers, titles, emphasis."""
     return _apply(Fg.CYAN, text)
+
+
+def tag_color(index: int, text: str) -> str:
+    """Color text using the tag palette, cycling by index."""
+    return _apply(TAG_PALETTE[index % len(TAG_PALETTE)], text)
 
 
 def dim(text: str) -> str:

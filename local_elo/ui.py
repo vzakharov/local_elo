@@ -7,7 +7,7 @@ from .constants import DEFAULT_LEADERBOARD_SIZE
 from .db import get_rankings, get_knockout_results
 from .colors import (
     green, red, yellow, cyan, dim, bold, bold_cyan, bold_red,
-    prob_color, histogram_bar
+    prob_color, histogram_bar, tag_color
 )
 from .utils import display_name
 
@@ -258,13 +258,36 @@ def format_competition(competitors: List[Tuple[str, str, float, int, str, List[s
     if not competitors:
         return ""
 
+    # Assign a distinct color to each tag that DIFFERS across the match — i.e.
+    # tags not carried by every competitor. Tags common to all competitors stay
+    # neutral (dimmed) since they don't distinguish anyone. Colors are assigned
+    # in first-appearance order and cycle through the palette when exhausted.
+    player_count = len(competitors)
+    tag_order = []
+    tag_counts = {}
+    for _, _, _, _, _, tags in competitors:
+        for tag in tags:
+            if tag not in tag_counts:
+                tag_counts[tag] = 0
+                tag_order.append(tag)
+            tag_counts[tag] += 1
+    tag_color_index = {}
+    for tag in tag_order:
+        if tag_counts[tag] < player_count:
+            tag_color_index[tag] = len(tag_color_index)
+
+    def render_tag(tag):
+        if tag in tag_color_index:
+            return tag_color(tag_color_index[tag], f"#{tag}")
+        return dim(f"#{tag}")
+
     strongest_slot = max(competitors, key=lambda c: c[2])[0]
     lines = [bold("Competition:")]
     for slot, display_path, elo, rank, record, tags in competitors:
         name = bold(display_path) if slot == strongest_slot else display_path
         lines.append(f"  {bold(slot)}: {name} ({int(elo)} / #{rank} / {record})")
         if tags:
-            tag_str = " ".join(cyan(f"#{tag}") for tag in tags)
+            tag_str = " ".join(render_tag(tag) for tag in tags)
             lines.append(f"     {tag_str}")
 
     lines.append(dim("Command: slots for winners (e.g. ac), 't' for tie-all, '+' all pass, '-' winners do not pass"))

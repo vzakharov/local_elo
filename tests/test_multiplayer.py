@@ -584,5 +584,46 @@ class TagCommandTests(unittest.TestCase):
             self.assertEqual(get_tags(conn, competitors[0][0]), ["gone"])
 
 
+class TagColoringTests(unittest.TestCase):
+    @staticmethod
+    def _competitor(slot, tags, elo=1000):
+        return (slot, f"{slot}.txt", elo, 1, "0W-0L-0T", tags)
+
+    def test_common_tags_dim_and_differing_tags_colored(self):
+        import local_elo.colors as colors
+        from local_elo.colors import Style, TAG_PALETTE
+        from local_elo.ui import format_competition
+
+        with patch.object(colors, "COLORS_ENABLED", True):
+            out = format_competition([
+                self._competitor("a", ["shared", "onlyA"]),
+                self._competitor("b", ["shared", "onlyB"]),
+            ])
+
+        # 'shared' is on every competitor -> dimmed, no palette color.
+        self.assertIn(f"{Style.DIM}#shared", out)
+        # Differing tags get palette colors in first-appearance order.
+        self.assertIn(f"{TAG_PALETTE[0]}#onlyA", out)
+        self.assertIn(f"{TAG_PALETTE[1]}#onlyB", out)
+
+    def test_same_differing_tag_shares_color_across_players(self):
+        import local_elo.colors as colors
+        from local_elo.colors import TAG_PALETTE
+        from local_elo.ui import format_competition
+
+        with patch.object(colors, "COLORS_ENABLED", True):
+            out = format_competition([
+                self._competitor("a", ["x"]),
+                self._competitor("b", ["x", "y"]),
+                self._competitor("c", ["y"]),
+            ])
+
+        # x (on a,b) and y (on b,c) each differ from the full set of 3 players.
+        # x appears first -> palette[0]; y second -> palette[1]. x under both
+        # a and b must share the same color.
+        self.assertEqual(out.count(f"{TAG_PALETTE[0]}#x"), 2)
+        self.assertEqual(out.count(f"{TAG_PALETTE[1]}#y"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
