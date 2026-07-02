@@ -10,7 +10,7 @@ from local_elo.elo import (
     calculate_multiplayer_elo_deltas, record_competition, redistribute_elo_delta,
     update_elo_ratings,
 )
-from local_elo.files import handle_refresh_command, handle_rename_command, handle_tag_command
+from local_elo.files import handle_refresh_command, handle_rem_command, handle_rename_command, handle_tag_command
 from local_elo.knockout import (
     effective_locked, handle_all_locked_unlock, handle_game_result, handle_lock_command
 )
@@ -657,6 +657,62 @@ class TagColoringTests(unittest.TestCase):
 
             self.assertEqual(get_tag_color_map(conn),
                              {"alpha": 0, "bravo": 1, "charlie": 2, "delta": 3})
+
+
+class RemCommandTests(unittest.TestCase):
+    def _seed(self, tmp_dir, names):
+        tmp_path = Path(tmp_dir)
+        for name in names:
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        conn = init_db(tmp_dir)
+        for name in names:
+            add_file_to_db(conn, name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, path FROM files ORDER BY path")
+        rows = cursor.fetchall()
+        return conn, rows
+
+    def test_rem_returns_removed_ids(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, rows = self._seed(tmp_dir, ["a.txt", "b.txt", "c.txt"])
+            competitors = [(row[0], row[1]) for row in rows]
+            with patch("local_elo.elo.sys.platform", "linux"):
+                removed = handle_rem_command(
+                    conn, "b", competitors, tmp_dir,
+                    files=[], eliminated=set(), tournament_pool=set(),
+                )
+            # 'b' is slot index 1 -> the id of b.txt.
+            self.assertEqual(removed, [rows[1][0]])
+            # Row is gone from the DB; the others remain.
+            cursor = conn.cursor()
+            cursor.execute("SELECT path FROM files ORDER BY path")
+            self.assertEqual([r[0] for r in cursor.fetchall()], ["a.txt", "c.txt"])
+
+    def test_rem_multiple_slots_returns_all_ids(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, rows = self._seed(tmp_dir, ["a.txt", "b.txt", "c.txt", "d.txt"])
+            competitors = [(row[0], row[1]) for row in rows]
+            with patch("local_elo.elo.sys.platform", "linux"):
+                removed = handle_rem_command(
+                    conn, "bd", competitors, tmp_dir,
+                    files=[], eliminated=set(), tournament_pool=set(),
+                )
+            # Slots b and d -> ids of b.txt and d.txt.
+            self.assertEqual(set(removed), {rows[1][0], rows[3][0]})
+
+    def test_rem_invalid_slot_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            conn, rows = self._seed(tmp_dir, ["a.txt", "b.txt"])
+            competitors = [(row[0], row[1]) for row in rows]
+            removed = handle_rem_command(
+                conn, "z", competitors, tmp_dir,
+                files=[], eliminated=set(), tournament_pool=set(),
+            )
+            self.assertEqual(removed, [])
+            # Nothing was removed.
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM files")
+            self.assertEqual(cursor.fetchone()[0], 2)
 
 
 if __name__ == "__main__":

@@ -116,17 +116,17 @@ def apply_wildcard_rename(old_pattern: str, new_pattern: str, target_dir: str) -
 
 def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tuple[int, str]],
                        target_dir: str, files: List[Tuple], eliminated: set,
-                       tournament_pool: set) -> bool:
+                       tournament_pool: set) -> list:
     """
     Remove competitor(s) by slot letter sequence, e.g. 'a', 'bd'.
-    Returns True to signal need for new matchup.
+    Returns the list of removed file ids; empty if nothing was removed.
     """
     arg = arg.lower()
     valid_slots = {chr(ord('a') + idx): (file_id, path) for idx, (file_id, path) in enumerate(competitors)}
     if not arg or any(ch not in valid_slots for ch in arg):
         printable = "".join(valid_slots.keys())
         print(red(f"  Invalid argument: '{arg}'. Use one or more of: {printable}"))
-        return False
+        return []
 
     to_remove = []
     seen = set()
@@ -136,6 +136,7 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
         seen.add(ch)
         to_remove.append(valid_slots[ch])
 
+    removed_ids = []
     for file_id, file_path in to_remove:
         cursor = conn.cursor()
         cursor.execute("SELECT elo FROM files WHERE id = ?", (file_id,))
@@ -153,10 +154,11 @@ def handle_rem_command(conn: sqlite3.Connection, arg: str, competitors: List[Tup
 
         eliminated.discard(file_id)
         tournament_pool.discard(file_id)
+        removed_ids.append(file_id)
 
         print(f"{green('✓')} Removed {cyan(file_path)} and redistributed {bold(f'{delta:+.1f}')} Elo")
 
-    return True
+    return removed_ids
 
 
 def handle_tag_command(conn: sqlite3.Connection, arg: str,

@@ -341,9 +341,22 @@ def main():
                 if user_input.lower().startswith('rem '):
                     arg = user_input[4:].strip()
                     visible_competitors = [(player[0], player[1]) for player in competition_players]
-                    if handle_rem_command(conn, arg, visible_competitors, args.target_dir, files, eliminated, tournament_pool):
-                        break
-                    continue
+                    removed_ids = handle_rem_command(conn, arg, visible_competitors, args.target_dir, files, eliminated, tournament_pool)
+                    if not removed_ids:
+                        continue
+                    remaining = [p for p in competition_players if p[0] not in removed_ids]
+                    # Multiplayer match with >=2 survivors: keep playing this matchup instead of resetting.
+                    if len(competition_players) > 2 and len(remaining) >= 2:
+                        # Removal redistributed Elo to survivors, so re-fetch their fresh rows
+                        # (handle_game_result scores off player[2]).
+                        fresh = {f[0]: f for f in get_active_files(conn, args.target_dir, pattern)}
+                        competition_players = [fresh.get(p[0], p) for p in remaining]
+                        current_rankings = get_rankings(conn)
+                        slots = slot_letters(len(competition_players))
+                        matchup_display = render_matchup(competition_players)
+                        print(matchup_display)
+                        continue
+                    break
 
                 # Check for add command (knockout mode only)
                 if user_input.lower().startswith('add '):
