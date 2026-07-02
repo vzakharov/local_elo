@@ -68,11 +68,6 @@ def cyan(text: str) -> str:
     return _apply(Fg.CYAN, text)
 
 
-def blue(text: str) -> str:
-    """Blue text - unobtrusive but distinct, e.g. for tags."""
-    return _apply(Fg.BLUE, text)
-
-
 def dim(text: str) -> str:
     """Dimmed text - for secondary info, no change."""
     return _apply(Style.DIM, text)
