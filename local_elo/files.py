@@ -7,7 +7,7 @@ import subprocess
 import sqlite3
 from typing import List, Tuple, Optional
 
-from .constants import DB_NAME, CONFIG_NAME
+from .constants import DB_NAME, CONFIG_NAME, MERGES_NAME
 from .db import (
     add_file_to_db, remove_entry_from_database, remove_elimination,
     add_tags, remove_tags, count_files_with_tag, rename_tag, remove_tag_everywhere,
@@ -36,7 +36,7 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
             continue
 
         # Skip the script itself, database, and startup scripts
-        if filename in ['local_elo.py', DB_NAME, CONFIG_NAME, 'elo_start.sh', 'elo_start.bat']:
+        if filename in ['local_elo.py', DB_NAME, CONFIG_NAME, MERGES_NAME, 'elo_start.sh', 'elo_start.bat']:
             continue
 
         # Check if filename matches the pattern
@@ -51,6 +51,18 @@ def sync_files(conn: sqlite3.Connection, pattern: str, target_dir: str = '.') ->
     files = discover_files(pattern, target_dir)
     for filepath in files:
         add_file_to_db(conn, filepath)
+
+
+def _propagate_renames(target_dir: str, pairs) -> None:
+    """Propagate local renames to any merged folders that consume this dir.
+
+    A no-op unless a ``local_elo_merges.json`` registry is present. Imported
+    lazily to avoid a circular import (merge.py imports discover_files here).
+    """
+    if not pairs:
+        return
+    from .merge import propagate_rename_to_merges
+    propagate_rename_to_merges(target_dir, pairs)
 
 
 def trash_file(filepath: str, target_dir: str) -> None:
@@ -508,15 +520,17 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
             
             cursor = conn.cursor()
             renamed_count = 0
+            renamed_pairs = []
             for old_filename, new_filename in matches:
                 old_path = os.path.join(target_dir, old_filename)
                 new_path = os.path.join(target_dir, new_filename)
-                
+
                 try:
                     os.rename(old_path, new_path)
                     cursor.execute('UPDATE files SET path = ? WHERE path = ?', (new_filename, old_filename))
                     renamed_count += 1
-                    
+                    renamed_pairs.append((old_filename, new_filename))
+
                     current_paths = [
                         new_filename if existing == old_filename else existing
                         for existing in current_paths
@@ -526,6 +540,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
 
             conn.commit()
             print(green(f"Renamed {renamed_count} file(s)"))
+            _propagate_renames(target_dir, renamed_pairs)
 
         except ValueError as e:
             print(red(f"Error: {e}"))
@@ -559,6 +574,7 @@ def handle_rename_command(conn: sqlite3.Connection, user_input: str, target_dir:
         conn.commit()
 
         print(green(f"Renamed '{old_name}' to '{new_name}'"))
+        _propagate_renames(target_dir, [(old_name, new_name)])
 
         current_paths = [
             new_name if existing == old_name else existing

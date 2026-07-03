@@ -18,6 +18,12 @@ from .settings import resolve_settings, settings_to_config, save_config, build_p
 
 def main():
     """Main entry point for the Local Elo CLI tool."""
+    # `merge` is a dedicated subcommand with its own parser; dispatch before the
+    # flat settings machinery (which assumes a positional target_dir) ever runs.
+    if len(sys.argv) > 1 and sys.argv[1] == 'merge':
+        from .merge import merge_main
+        sys.exit(merge_main(sys.argv[2:]))
+
     # Resolve settings: built-in defaults < stored JSON (target dir) < CLI flags.
     args = resolve_settings()
 
