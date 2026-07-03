@@ -1,7 +1,6 @@
 import sqlite3
 import sys
 import os
-import argparse
 
 from .db import init_db, get_active_files, get_rankings, load_round_played, clear_round_played, get_round_info, set_round_info, get_tags, get_tag_color_map
 from .files import handle_open_command, handle_rename_command, handle_rem_command, handle_add_command, handle_refresh_command, handle_tag_command, sync_files
@@ -11,127 +10,16 @@ from .knockout import (
     handle_game_result, handle_reset_command, initialize_knockout_tournament, handle_winner_screen,
     effective_locked, handle_all_locked_unlock, handle_lock_command
 )
-from .colors import red, yellow, dim
+from .colors import red, yellow, green, dim
 from .utils import display_name, extensions_to_pattern
 from .outcome import parse_outcome_command, parse_outcome_with_lock_modifiers, slot_letters
-
-
-def parse_pool_size(value: str):
-    """Parse pool size argument in X/Y format.
-
-    X = total pool size
-    Y = number selected via top-skewing weighted (remaining X-Y use custom weighted)
-
-    Examples:
-      200/50 - Total pool of 200: 150 custom weighted + 50 top-skewing weighted
-      32     - Total pool of 32: all custom weighted (equivalent to 32/0)
-    """
-    from .knockout import PoolConfig
-
-    try:
-        if '/' in value:
-            parts = value.split('/')
-            if len(parts) != 2:
-                raise argparse.ArgumentTypeError(
-                    f"Invalid pool size format '{value}'. Expected 'X/Y' format"
-                )
-
-            if not parts[0] or not parts[1]:
-                raise argparse.ArgumentTypeError(
-                    f"Invalid pool size format '{value}'. Both X and Y must be specified"
-                )
-
-            total_size = int(parts[0])
-            top_skewing_size = int(parts[1])
-
-            # Validate constraints
-            if total_size < 2:
-                raise argparse.ArgumentTypeError(
-                    "Total pool size (X) must be at least 2"
-                )
-            if top_skewing_size < 0:
-                raise argparse.ArgumentTypeError(
-                    "Top-skewing size (Y) cannot be negative"
-                )
-            if top_skewing_size > total_size:
-                raise argparse.ArgumentTypeError(
-                    f"Top-skewing size (Y={top_skewing_size}) cannot exceed total size (X={total_size})"
-                )
-
-            return PoolConfig(total_size=total_size, top_skewing_size=top_skewing_size)
-        else:
-            # Single number format: X defaults to all custom weighted (Y=0)
-            total_size = int(value)
-            if total_size < 2:
-                raise argparse.ArgumentTypeError("Pool size must be at least 2")
-            return PoolConfig(total_size=total_size, top_skewing_size=0)
-
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"Invalid pool size '{value}'. Must be integer or 'X/Y' format"
-        )
-
-
-def parse_power(value: str):
-    """Parse power parameter in X/Y format.
-
-    X = games power, Y = elo power
-    Examples:
-        '10/5' -> (10.0, 5.0)
-        '10/' -> (10.0, DEFAULT_ELO_POWER)
-        '/5' -> (DEFAULT_GAMES_POWER, 5.0)
-        '10' -> (10.0, DEFAULT_ELO_POWER)
-    """
-    from .constants import DEFAULT_GAMES_POWER, DEFAULT_ELO_POWER
-
-    try:
-        if '/' in value:
-            parts = value.split('/')
-            if len(parts) != 2:
-                raise argparse.ArgumentTypeError(
-                    f"Invalid power format '{value}'. Expected 'X/Y' format"
-                )
-            games_power = float(parts[0]) if parts[0] else DEFAULT_GAMES_POWER
-            elo_power = float(parts[1]) if parts[1] else DEFAULT_ELO_POWER
-        else:
-            games_power = float(value)
-            elo_power = DEFAULT_ELO_POWER
-
-        return (games_power, elo_power)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"Invalid power '{value}'. Must be float or 'X/Y' format"
-        )
+from .settings import resolve_settings, settings_to_config, save_config, build_parser
 
 
 def main():
     """Main entry point for the Local Elo CLI tool."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Local Elo - Rank files using Elo ratings')
-    parser.add_argument('target_dir', nargs='?', default='.',
-                       help='Target directory to search for files (default: current directory)')
-    parser.add_argument('-e', '--extension', dest='extensions', default=None,
-                       help='File extensions to include (comma-separated, e.g., "py,js,ts")')
-    parser.add_argument('-k', '--knockout', action='store_true',
-                       help='Knockout mode: eliminate losers until only one remains')
-    parser.add_argument('-p', '--power', dest='power', type=parse_power, default=(2.0, 2.0),
-                       help='Power factors in X/Y format: X=games power, Y=elo power (default: 2.0/2.0). '
-                            'Examples: -p 10/5 (games=10, elo=5), -p 10/ (games=10, elo=default), -p /5 (games=default, elo=5)')
-    parser.add_argument('-n', '--pool-size', dest='pool_size', type=parse_pool_size, default=None,
-                       help='Tournament pool selection in X/Y format. '
-                            'X = total pool size, Y = top-skewing weighted (remaining X-Y custom weighted). '
-                            'Custom weighted uses power param, top-skewing uses hardcoded constant. '
-                            'Examples: -n 200/50 (200 total: 150 custom + 50 top-skewing), '
-                            '-n 32 (32 total: all custom weighted). '
-                            '(default: use all remaining files)')
-    parser.add_argument('-l', '--link', dest='link_pattern', default=None,
-                       help='URL pattern for clickable links (use * as placeholder for filename, e.g., "linkedin.com/in/*")')
-    parser.add_argument('-m', '--match-size', dest='match_size', type=int, default=2,
-                       help='Number of players shown in each competition round (default: 2, max: 26)')
-    parser.add_argument('-r', '--refresh', action='store_true',
-                       help='Delete DB entries whose files no longer exist on disk, '
-                            'recalculate remaining Elos (total = N x 1000), then exit.')
-    args = parser.parse_args()
+    # Resolve settings: built-in defaults < stored JSON (target dir) < CLI flags.
+    args = resolve_settings()
 
     # Set global link pattern
     if args.link_pattern:
@@ -280,11 +168,11 @@ def main():
                 slot_hint = "".join(slots)
                 if args.knockout:
                     user_input = input(
-                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <±tags>/add <name>/refresh/reset): "
+                        f"Your choice ({slot_hint}[+/-/!]/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <±tags>/add <name>/refresh/reset/store): "
                     ).strip()
                 else:
                     user_input = input(
-                        f"Your choice ({slot_hint}/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <±tags>/refresh): "
+                        f"Your choice ({slot_hint}/t/o/top [N]/ren <letter|old> <new>/rem <slots>/tag <letter> <±tags>/refresh/store): "
                     ).strip()
 
                 # Check for top command
@@ -325,6 +213,14 @@ def main():
                     if removed:
                         # Survivor Elos changed — re-sync and pull a fresh matchup.
                         break
+                    print(matchup_display)
+                    continue
+
+                # Check for store command: persist the current settings to the
+                # target dir's JSON config so future runs pick them up by default.
+                if user_input.lower() == 'store':
+                    path = save_config(args.target_dir, settings_to_config(args, build_parser()))
+                    print(green(f"Saved current settings to {path}"))
                     print(matchup_display)
                     continue
 
@@ -393,9 +289,9 @@ def main():
                         lock_arg = ""
                 except ValueError as exc:
                     if args.knockout:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, tag, add, refresh, or reset"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}) with optional +, -, and inline !, t, o, top [N], ren, rem, tag, add, refresh, reset, or store"))
                     else:
-                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, tag, or refresh"))
+                        print(yellow(f"Invalid input: {exc}. Use slots ({slot_hint}), t, o, top [N], ren, rem, tag, refresh, or store"))
                     continue
 
                 handle_game_result(

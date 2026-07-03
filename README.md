@@ -70,6 +70,30 @@ without exiting.
 Refresh never adds files that exist on disk but aren't yet tracked — those are
 picked up automatically as you play.
 
+### Stored settings
+The command-line options can be saved per-directory in a `local_elo.json` file
+alongside the database, so you don't have to retype them every run. On startup the
+tool reads that file (if present) from the target directory and uses it for the
+options; anything you pass on the command line overrides the stored value.
+
+Precedence is **built-in defaults < `local_elo.json` < command-line flags**. The
+file is entirely optional — if it's missing, the tool behaves exactly as before.
+
+You don't have to hand-write it: type `store` during a session to save the current
+settings to `<target_dir>/local_elo.json`. Example:
+```json
+{
+  "extensions": "py,js,ts",
+  "knockout": true,
+  "link_pattern": "linkedin.com/in/*",
+  "match_size": 4,
+  "pool_size": "200/50",
+  "power": "10/5"
+}
+```
+(`target_dir` and `--refresh` are never stored — the former locates the file, the
+latter is a one-shot action.)
+
 ### During gameplay
 ```
 A: photo1.jpg (1520) vs B: photo2.jpg (1480)
@@ -83,6 +107,7 @@ Your choice (A/B/=/top [N]):
 - `top` - Show top 10 files
 - `top 20` - Show top 20 files
 - `refresh` - Purge database entries whose files no longer exist on disk and recalculate remaining Elos (lists what will be deleted and asks for confirmation first)
+- `store` - Save the current settings to `local_elo.json` in the target directory so future runs reuse them
 - `Ctrl+C` - Exit
 
 ### Example session

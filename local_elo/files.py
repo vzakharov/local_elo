@@ -7,7 +7,7 @@ import subprocess
 import sqlite3
 from typing import List, Tuple, Optional
 
-from .constants import DB_NAME
+from .constants import DB_NAME, CONFIG_NAME
 from .db import (
     add_file_to_db, remove_entry_from_database, remove_elimination,
     add_tags, remove_tags, count_files_with_tag, rename_tag, remove_tag_everywhere,
@@ -36,7 +36,7 @@ def discover_files(pattern: str, target_dir: str = '.') -> List[str]:
             continue
 
         # Skip the script itself, database, and startup scripts
-        if filename in ['local_elo.py', DB_NAME, 'elo_start.sh', 'elo_start.bat']:
+        if filename in ['local_elo.py', DB_NAME, CONFIG_NAME, 'elo_start.sh', 'elo_start.bat']:
             continue
 
         # Check if filename matches the pattern
