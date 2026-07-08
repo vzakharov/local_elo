@@ -10,6 +10,10 @@ class MatchOutcome:
     pass_slots: Set[int]
     tie_all: bool
     raw_command: str
+    # When True (the "-" suffix), the named winners are removed from the
+    # tournament but the surviving players do NOT advance to the next round —
+    # they stay in the current round and the matchup is reshuffled.
+    reshuffle: bool = False
 
 
 def slot_letters(count: int) -> str:
@@ -54,10 +58,12 @@ def _parse_compact_outcome(command: str, player_count: int) -> MatchOutcome:
 
     winner_slots = {letters.index(char) for char in slots}
     all_slots = set(range(player_count))
+    reshuffle = False
     if suffix == "+":
         pass_slots = all_slots
     elif suffix == "-":
         pass_slots = all_slots - winner_slots
+        reshuffle = True
     else:
         pass_slots = set(winner_slots)
 
@@ -66,6 +72,7 @@ def _parse_compact_outcome(command: str, player_count: int) -> MatchOutcome:
         pass_slots=pass_slots,
         tie_all=False,
         raw_command=command,
+        reshuffle=reshuffle,
     )
 
 
@@ -86,14 +93,14 @@ def _parse_legacy_two_player(command: str) -> Optional[MatchOutcome]:
     if legacy == "B+":
         return MatchOutcome({1}, both, False, command)
     if legacy == "A-":
-        return MatchOutcome({0}, {1}, False, command)
+        return MatchOutcome({0}, {1}, False, command, reshuffle=True)
     if legacy == "B-":
-        return MatchOutcome({1}, {0}, False, command)
+        return MatchOutcome({1}, {0}, False, command, reshuffle=True)
     if legacy == "TA-":
-        return MatchOutcome(both, {1}, True, command)
+        return MatchOutcome(both, {1}, True, command, reshuffle=True)
     if legacy == "TB-":
-        return MatchOutcome(both, {0}, True, command)
-    return MatchOutcome(both, set(), True, command)
+        return MatchOutcome(both, {0}, True, command, reshuffle=True)
+    return MatchOutcome(both, set(), True, command, reshuffle=True)
 
 
 def parse_outcome_command(command: str, player_count: int) -> MatchOutcome:
@@ -156,6 +163,7 @@ def parse_outcome_with_lock_modifiers(command: str, player_count: int) -> Tuple[
             pass_slots=base_outcome.pass_slots | locked_slots,
             tie_all=base_outcome.tie_all,
             raw_command=command,
+            reshuffle=base_outcome.reshuffle,
         ),
         locked_slots,
     )

@@ -139,9 +139,13 @@ def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
         eliminated.add(file_id)
         save_elimination(conn, file_id)
 
-    for idx, file_id in enumerate(file_ids):
-        if file_id in pass_ids and file_id not in eliminated:
-            save_round_played(conn, file_id)
+    # With the "-" suffix, survivors stay in the current round (they are not
+    # marked as having played it), so the main loop reshuffles them into a new
+    # matchup instead of advancing them to the next round.
+    if not outcome.reshuffle:
+        for idx, file_id in enumerate(file_ids):
+            if file_id in pass_ids and file_id not in eliminated:
+                save_round_played(conn, file_id)
 
     winners_display = [path_by_slot[idx] for idx in sorted(outcome.winner_slots)]
     pass_display = [path_by_slot[idx] for idx in sorted(outcome.pass_slots)]
@@ -154,7 +158,10 @@ def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
     else:
         print(f"  Winners: {bold_green(', '.join(winners_display))}")
 
-    if pass_display:
+    if outcome.reshuffle:
+        if pass_display:
+            print(f"  Staying this round (reshuffled): {green(', '.join(pass_display))}")
+    elif pass_display:
         print(f"  Pass to next round: {green(', '.join(pass_display))}")
     else:
         print(f"  Pass to next round: {dim('(none)')}")
