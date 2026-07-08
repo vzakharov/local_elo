@@ -139,10 +139,10 @@ def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
         eliminated.add(file_id)
         save_elimination(conn, file_id)
 
-    # With the "-" suffix, survivors stay in the current round (they are not
-    # marked as having played it), so the main loop reshuffles them into a new
-    # matchup instead of advancing them to the next round.
-    if not outcome.reshuffle:
+    # With the "-" suffix, the survivors keep competing in the same matchup and
+    # do not advance to the next round, so they are not marked as having played
+    # it (the main loop keeps them in the current set).
+    if not outcome.stay_in_match:
         for idx, file_id in enumerate(file_ids):
             if file_id in pass_ids and file_id not in eliminated:
                 save_round_played(conn, file_id)
@@ -158,9 +158,9 @@ def handle_game_result(conn: sqlite3.Connection, outcome: MatchOutcome,
     else:
         print(f"  Winners: {bold_green(', '.join(winners_display))}")
 
-    if outcome.reshuffle:
+    if outcome.stay_in_match:
         if pass_display:
-            print(f"  Staying this round (reshuffled): {green(', '.join(pass_display))}")
+            print(f"  Still competing: {green(', '.join(pass_display))}")
     elif pass_display:
         print(f"  Pass to next round: {green(', '.join(pass_display))}")
     else:

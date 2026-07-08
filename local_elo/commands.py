@@ -307,6 +307,21 @@ def main():
                 if lock_arg:
                     visible_competitors = [(player[0], player[1]) for player in competition_players]
                     handle_lock_command(conn, lock_arg, visible_competitors, locked)
+
+                # The "-" suffix removes the winner(s) from the tournament but
+                # keeps the remaining players competing in the same set — just
+                # like `rem`, we replay this matchup instead of drawing a new one.
+                if outcome.stay_in_match:
+                    remaining = [p for p in competition_players if p[0] not in eliminated]
+                    if len(competition_players) > 2 and len(remaining) >= 2:
+                        # Scoring redistributed Elo to survivors, so re-fetch their fresh rows.
+                        fresh = {f[0]: f for f in get_active_files(conn, args.target_dir, pattern)}
+                        competition_players = [fresh.get(p[0], p) for p in remaining]
+                        current_rankings = get_rankings(conn)
+                        slots = slot_letters(len(competition_players))
+                        matchup_display = render_matchup(competition_players)
+                        print(matchup_display)
+                        continue
                 break
 
     except KeyboardInterrupt:

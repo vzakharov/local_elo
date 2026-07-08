@@ -11,9 +11,10 @@ class MatchOutcome:
     tie_all: bool
     raw_command: str
     # When True (the "-" suffix), the named winners are removed from the
-    # tournament but the surviving players do NOT advance to the next round —
-    # they stay in the current round and the matchup is reshuffled.
-    reshuffle: bool = False
+    # tournament and the remaining players keep competing in the same matchup
+    # (just like the `rem` command) — nobody advances to the next round and no
+    # new matchup is drawn.
+    stay_in_match: bool = False
 
 
 def slot_letters(count: int) -> str:
@@ -58,12 +59,12 @@ def _parse_compact_outcome(command: str, player_count: int) -> MatchOutcome:
 
     winner_slots = {letters.index(char) for char in slots}
     all_slots = set(range(player_count))
-    reshuffle = False
+    stay_in_match = False
     if suffix == "+":
         pass_slots = all_slots
     elif suffix == "-":
         pass_slots = all_slots - winner_slots
-        reshuffle = True
+        stay_in_match = True
     else:
         pass_slots = set(winner_slots)
 
@@ -72,7 +73,7 @@ def _parse_compact_outcome(command: str, player_count: int) -> MatchOutcome:
         pass_slots=pass_slots,
         tie_all=False,
         raw_command=command,
-        reshuffle=reshuffle,
+        stay_in_match=stay_in_match,
     )
 
 
@@ -93,14 +94,14 @@ def _parse_legacy_two_player(command: str) -> Optional[MatchOutcome]:
     if legacy == "B+":
         return MatchOutcome({1}, both, False, command)
     if legacy == "A-":
-        return MatchOutcome({0}, {1}, False, command, reshuffle=True)
+        return MatchOutcome({0}, {1}, False, command, stay_in_match=True)
     if legacy == "B-":
-        return MatchOutcome({1}, {0}, False, command, reshuffle=True)
+        return MatchOutcome({1}, {0}, False, command, stay_in_match=True)
     if legacy == "TA-":
-        return MatchOutcome(both, {1}, True, command, reshuffle=True)
+        return MatchOutcome(both, {1}, True, command, stay_in_match=True)
     if legacy == "TB-":
-        return MatchOutcome(both, {0}, True, command, reshuffle=True)
-    return MatchOutcome(both, set(), True, command, reshuffle=True)
+        return MatchOutcome(both, {0}, True, command, stay_in_match=True)
+    return MatchOutcome(both, set(), True, command, stay_in_match=True)
 
 
 def parse_outcome_command(command: str, player_count: int) -> MatchOutcome:
@@ -163,7 +164,7 @@ def parse_outcome_with_lock_modifiers(command: str, player_count: int) -> Tuple[
             pass_slots=base_outcome.pass_slots | locked_slots,
             tie_all=base_outcome.tie_all,
             raw_command=command,
-            reshuffle=base_outcome.reshuffle,
+            stay_in_match=base_outcome.stay_in_match,
         ),
         locked_slots,
     )
