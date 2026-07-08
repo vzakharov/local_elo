@@ -23,6 +23,22 @@ class MultiplayerParserTests(unittest.TestCase):
         self.assertEqual(outcome.winner_slots, {0, 2, 3})
         self.assertEqual(outcome.pass_slots, {0, 1, 2, 3, 4})
         self.assertFalse(outcome.tie_all)
+        self.assertFalse(outcome.reshuffle)
+
+    def test_minus_suffix_sets_reshuffle(self):
+        outcome = parse_outcome_command("ab-", 4)
+        self.assertEqual(outcome.winner_slots, {0, 1})
+        # Survivors are not eliminated but do not advance either.
+        self.assertEqual(outcome.pass_slots, {2, 3})
+        self.assertTrue(outcome.reshuffle)
+
+    def test_plain_command_does_not_reshuffle(self):
+        outcome = parse_outcome_command("a", 3)
+        self.assertFalse(outcome.reshuffle)
+
+    def test_legacy_minus_sets_reshuffle(self):
+        self.assertTrue(parse_outcome_command("A-", 2).reshuffle)
+        self.assertTrue(parse_outcome_command("TB-", 2).reshuffle)
 
     def test_tie_command(self):
         outcome = parse_outcome_command("t", 4)
@@ -83,7 +99,7 @@ class MultiplayerEloTests(unittest.TestCase):
 
 
 class KnockoutPassFlowTests(unittest.TestCase):
-    def test_minus_suffix_removes_winners(self):
+    def test_minus_suffix_removes_winners_and_keeps_survivors_in_round(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             for name in ["one.txt", "two.txt", "three.txt"]:
@@ -104,6 +120,7 @@ class KnockoutPassFlowTests(unittest.TestCase):
                 pass_slots={2},
                 tie_all=False,
                 raw_command="ab-",
+                reshuffle=True,
             )
             eliminated = set()
             tournament_pool = set()
@@ -122,7 +139,9 @@ class KnockoutPassFlowTests(unittest.TestCase):
 
             expected_eliminated = {competitors[0][0], competitors[1][0]}
             self.assertEqual(eliminated, expected_eliminated)
-            self.assertEqual(load_round_played(conn), {competitors[2][0]})
+            # Survivors stay in the current round: none are marked as having
+            # played it, so the main loop reshuffles them.
+            self.assertEqual(load_round_played(conn), set())
 
 
 class KnockoutLockFlowTests(unittest.TestCase):
