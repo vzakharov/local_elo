@@ -94,6 +94,38 @@ settings to `<target_dir>/local_elo.json`. Example:
 (`target_dir` and `--refresh` are never stored — the former locates the file, the
 latter is a one-shot action.)
 
+### Merged projects
+Rank files that live across several folders together, without copying them:
+
+```bash
+python3 local_elo.py merge -o merged_pool -i ~/photos/trip1 ~/photos/trip2 ~/photos/trip3
+```
+
+This assembles `merged_pool/` out of **symlinks** to every file in the input
+folders (so no disk is wasted and `o` still opens the originals), then you rank
+it like any other folder: `python3 local_elo.py merged_pool`.
+
+- **Disambiguation**: when the same filename appears in more than one input
+  folder, the symlink is named `name (source folder).ext`; unique names stay
+  plain. (A disambiguated name is kept on later re-runs even if the collision
+  goes away, since links are tracked by their target — this is also what lets
+  you rename a symlink inside the merged folder without a re-merge undoing it.)
+- **Seeded Elo**: each merged file starts at the Elo it had in its source
+  folder's `local_elo.db` (record reset to 0). Files with no prior rating start
+  at 1000. Files that already exist in the merged folder keep their current
+  Elo — so ratings earned inside the merged pool are never reset by a re-merge.
+- **Merged settings**: the input folders' `local_elo.json` settings are combined
+  (first folder wins per option; `extensions` are unioned).
+- **Idempotent**: re-run `merge` any time — new source files gain symlinks,
+  removed ones have their symlinks (and db rows) cleaned up, and correct links
+  are left untouched. Regular files you add to the merged folder are never
+  touched.
+- **Rename propagation**: because a symlink breaks if you rename its target,
+  each source folder records which merged folders consume it
+  (`local_elo_merges.json`). When you `ren` a file in a source folder, the merge
+  updates automatically (its symlink repoints and its db entry is renamed). A
+  full `merge` re-run heals anything changed outside the tool.
+
 ### During gameplay
 ```
 A: photo1.jpg (1520) vs B: photo2.jpg (1480)
